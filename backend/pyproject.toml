@@ -7,5 +7,8 @@ dependencies = [
     "fastapi[standard]>=0.128.1,<1",
 ]
 
+[tool.setuptools]
+py-modules = ["main", "classifier", "rally"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

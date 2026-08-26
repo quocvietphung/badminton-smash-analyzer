@@ -21,7 +21,7 @@ type BackendAnalysis = {
   strokeLabel: string;
   confidence: number;
   estimatedShuttleSpeedKmh: number | null;
-  speedStatus: "calibration_required";
+  speedStatus: "pose_estimate" | "not_available";
 };
 
 type StrokeEvent = {
@@ -30,7 +30,15 @@ type StrokeEvent = {
   score: number;
   wristSpeed: number;
   elbowAngle: number;
+  estimatedSpeedKmh: number | null;
   time: string;
+};
+
+type SwingCandidate = {
+  startedAt: number;
+  peakAt: number;
+  energy: number;
+  metrics: SmashMetrics;
 };
 
 const STROKE_TYPES: Array<{
@@ -73,6 +81,9 @@ async function analyzeWithBackend(metrics: SmashMetrics): Promise<BackendAnalysi
       elbowAngle: metrics.elbowAngle,
       shoulderAngle: metrics.shoulderAngle,
       contactHeight: metrics.contactHeight,
+      armAngularSpeed: metrics.armAngularSpeed,
+      bodyExtension: metrics.bodyExtension,
+      wristAboveShoulder: metrics.wristAboveShoulder,
       isContact: metrics.isContact,
     }),
   });
@@ -171,6 +182,7 @@ export default function SmashAnalyzer() {
   const [events, setEvents] = useState<StrokeEvent[]>([]);
   const [strokeCounts, setStrokeCounts] = useState(INITIAL_STROKE_COUNTS);
   const [activeStroke, setActiveStroke] = useState<StrokeType | null>(null);
+  const [latestSmashSpeed, setLatestSmashSpeed] = useState<number | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [cameraFacing, setCameraFacing] = useState<"user" | "environment">("environment");
   const [backendStatus, setBackendStatus] = useState<BackendStatus>("checking");
@@ -182,6 +194,7 @@ export default function SmashAnalyzer() {
   const connectionsRef = useRef<Connection[]>([]);
   const animationRef = useRef<number | null>(null);
   const memoryRef = useRef<PoseFrameMemory | null>(null);
+  const swingCandidateRef = useRef<SwingCandidate | null>(null);
   const lastVideoTimeRef = useRef(-1);
   const lastUiUpdateRef = useRef(0);
   const lastContactAtRef = useRef(-10_000);
@@ -196,6 +209,7 @@ export default function SmashAnalyzer() {
     landmarkerRef.current?.close();
     landmarkerRef.current = null;
     memoryRef.current = null;
+    swingCandidateRef.current = null;
     lastVideoTimeRef.current = -1;
     const context = canvasRef.current?.getContext("2d");
     if (canvasRef.current && context) {
@@ -251,17 +265,69 @@ export default function SmashAnalyzer() {
           );
           memoryRef.current = analysis.memory;
 
-          const newStroke =
-            analysis.metrics.isContact && now - lastContactAtRef.current > 1_100;
+          const currentMetrics = analysis.metrics;
+          const movementEnergy =
+            currentMetrics.wristSpeed + Math.min(currentMetrics.armAngularSpeed / 500, 1.2);
+          const canCollectSwing =
+            currentMetrics.confidence > 45 &&
+            currentMetrics.wristSpeed > 0.32 &&
+            currentMetrics.armAngularSpeed > 25 &&
+            now - lastContactAtRef.current > 650;
+
+          if (canCollectSwing) {
+            const candidate = swingCandidateRef.current;
+            if (!candidate) {
+              swingCandidateRef.current = {
+                startedAt: now,
+                peakAt: now,
+                energy: movementEnergy,
+                metrics: currentMetrics,
+              };
+            } else if (movementEnergy > candidate.energy) {
+              swingCandidateRef.current = {
+                ...candidate,
+                peakAt: now,
+                energy: movementEnergy,
+                metrics: currentMetrics,
+              };
+            }
+          }
+
+          const candidate = swingCandidateRef.current;
+          const candidateAge = candidate ? now - candidate.startedAt : 0;
+          const speedDropped = candidate
+            ? now - candidate.peakAt > 80 &&
+              currentMetrics.wristSpeed < candidate.metrics.wristSpeed * 0.58
+            : false;
+          const candidateTimedOut = candidateAge > 480;
+          const candidateIsStroke = candidate
+            ? candidate.metrics.wristSpeed >= 0.48 &&
+              candidate.metrics.armAngularSpeed >= 50
+            : false;
+          const newStroke = Boolean(
+            candidate &&
+            candidateAge > 120 &&
+            (speedDropped || candidateTimedOut) &&
+            candidateIsStroke &&
+            now - lastContactAtRef.current > 850,
+          );
+
           if (newStroke) {
+            const strokeMetrics: SmashMetrics = {
+              ...candidate!.metrics,
+              isContact: true,
+              phase: "CONTACT",
+            };
+            swingCandidateRef.current = null;
             lastContactAtRef.current = now;
             const eventId = Date.now();
             const strokeEvent: StrokeEvent = {
               id: eventId,
               label: "Đang phân tích…",
-              score: Math.round(analysis.metrics.score),
-              wristSpeed: analysis.metrics.wristSpeed,
-              elbowAngle: analysis.metrics.elbowAngle,
+              score: Math.round(strokeMetrics.score),
+              wristSpeed: strokeMetrics.wristSpeed,
+              elbowAngle: strokeMetrics.elbowAngle,
+              estimatedSpeedKmh: null,
               time: new Date().toLocaleTimeString("vi-VN", {
                 minute: "2-digit",
                 second: "2-digit",
@@ -270,7 +336,7 @@ export default function SmashAnalyzer() {
             setStrokeCount((count) => count + 1);
             setEvents((current) => [strokeEvent, ...current].slice(0, 3));
 
-            void analyzeWithBackend(analysis.metrics)
+            void analyzeWithBackend(strokeMetrics)
               .then((backendAnalysis) => {
                 setBackendStatus("online");
                 const strokeType = backendAnalysis.strokeType;
@@ -281,9 +347,16 @@ export default function SmashAnalyzer() {
                     [strokeType]: current[strokeType] + 1,
                   }));
                 }
+                if (backendAnalysis.estimatedShuttleSpeedKmh !== null) {
+                  setLatestSmashSpeed(backendAnalysis.estimatedShuttleSpeedKmh);
+                }
                 setEvents((current) => current.map((event) =>
                   event.id === eventId
-                    ? { ...event, label: backendAnalysis.strokeLabel }
+                    ? {
+                        ...event,
+                        label: backendAnalysis.strokeLabel,
+                        estimatedSpeedKmh: backendAnalysis.estimatedShuttleSpeedKmh,
+                      }
                     : event,
                 ));
               })
@@ -293,6 +366,8 @@ export default function SmashAnalyzer() {
                   event.id === eventId ? { ...event, label: "Smash" } : event,
                 ));
               });
+          } else if (candidate && (speedDropped || candidateTimedOut)) {
+            swingCandidateRef.current = null;
           }
 
           if (now - lastUiUpdateRef.current > 90 || newStroke) {
@@ -303,6 +378,7 @@ export default function SmashAnalyzer() {
             });
           }
         } else {
+          swingCandidateRef.current = null;
           const context = canvas.getContext("2d");
           context?.clearRect(0, 0, canvas.width, canvas.height);
         }
@@ -521,7 +597,7 @@ export default function SmashAnalyzer() {
           <MetricCard label="Góc khuỷu" value={Math.round(metrics.elbowAngle).toString()} unit="°" accent />
           <MetricCard label="Góc vai" value={Math.round(metrics.shoulderAngle).toString()} unit="°" />
           <MetricCard label="Tốc độ cổ tay" value={metrics.wristSpeed.toFixed(2)} unit=" rel/s" accent />
-          <MetricCard label="Tốc độ duỗi tay" value={Math.round(metrics.armAngularSpeed).toString()} unit="°/s" />
+          <MetricCard label="Tốc độ smash · ước tính" value={latestSmashSpeed === null ? "--" : Math.round(latestSmashSpeed).toString()} unit=" km/h" accent />
           <MetricCard label="Gập gối" value={Math.round(metrics.kneeFlexion).toString()} unit="°" />
           <MetricCard label="Độ cao tiếp xúc" value={Math.round(metrics.contactHeight).toString()} unit="%" />
         </div>
@@ -546,7 +622,7 @@ export default function SmashAnalyzer() {
             {events.length ? events.map((event) => (
               <div key={event.id} className={styles.eventRow}>
                 <span className={styles.eventDot} />
-                <div><strong>{event.label} · {event.score} điểm</strong><span>{event.elbowAngle.toFixed(0)}° khuỷu · {event.wristSpeed.toFixed(2)} rel/s</span></div>
+                <div><strong>{event.label} · {event.score} điểm</strong><span>{event.elbowAngle.toFixed(0)}° khuỷu · {event.wristSpeed.toFixed(2)} rel/s{event.estimatedSpeedKmh === null ? "" : ` · ${Math.round(event.estimatedSpeedKmh)} km/h`}</span></div>
                 <time>{event.time}</time>
               </div>
             )) : (
@@ -558,7 +634,7 @@ export default function SmashAnalyzer() {
         </div>
 
         <p className={styles.calibrationNote}>
-          <span>i</span> Tốc độ đang là đơn vị tương đối. Cần hiệu chuẩn kích thước sân để đổi sang m/s hoặc km/h.
+          <span>i</span> km/h là mức ước tính từ chuyển động cổ tay và tư thế. Muốn đo tốc độ quả cầu thật cần tracking cầu và hiệu chuẩn sân.
         </p>
       </aside>
     </section>

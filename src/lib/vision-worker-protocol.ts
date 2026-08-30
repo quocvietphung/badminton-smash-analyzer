@@ -6,6 +6,7 @@ import type {
 } from "./pose-lite-classifier";
 import type { FootworkMode, MotionAssessment, TechniqueMode } from "./motion-technique";
 import type { DominantSide } from "./pose-metrics";
+import type { PoseAppearance } from "./pose-appearance";
 
 export type VisionWorkerIncoming =
   | { type: "ping" }
@@ -19,6 +20,7 @@ export type VisionWorkerIncoming =
 export type VisionWorkerPose = {
   landmarks: PoseLandmark[];
   worldLandmarks?: PoseLandmark[];
+  appearance?: PoseAppearance;
 };
 
 export type VisionWorkerOutgoing =

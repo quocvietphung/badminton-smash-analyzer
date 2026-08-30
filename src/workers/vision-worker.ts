@@ -5,6 +5,7 @@ import {
 } from "../lib/pose-lite-classifier";
 import { assessMotionWindow } from "../lib/motion-technique";
 import { assessFootworkWindow } from "../lib/footwork-analysis";
+import { extractTorsoAppearance } from "../lib/pose-appearance";
 import type {
   VisionWorkerIncoming,
   VisionWorkerOutgoing,
@@ -12,6 +13,23 @@ import type {
 import type { PoseLandmarker as PoseLandmarkerInstance } from "@mediapipe/tasks-vision";
 
 let landmarker: PoseLandmarkerInstance | null = null;
+let appearanceCanvas: OffscreenCanvas | null = null;
+
+function addAppearances(frame: ImageBitmap, poses: Array<{ landmarks: Parameters<typeof extractTorsoAppearance>[3]; worldLandmarks?: Parameters<typeof extractTorsoAppearance>[3] }>) {
+  try {
+    appearanceCanvas ??= new OffscreenCanvas(320, 180);
+    const context = appearanceCanvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return poses;
+    context.drawImage(frame, 0, 0, 320, 180);
+    const pixels = context.getImageData(0, 0, 320, 180).data;
+    return poses.map((pose) => {
+      const appearance = extractTorsoAppearance(pixels, 320, 180, pose.landmarks);
+      return appearance ? { ...pose, appearance } : pose;
+    });
+  } catch {
+    return poses;
+  }
+}
 
 function respond(message: VisionWorkerOutgoing) {
   self.postMessage(message);
@@ -30,7 +48,7 @@ self.onmessage = async (event: MessageEvent<VisionWorkerIncoming>) => {
         landmarker = await PoseLandmarker.createFromOptions(vision, {
           baseOptions: { modelAssetPath: event.data.modelUrl, delegate: "CPU" },
           runningMode: "VIDEO",
-          numPoses: 1,
+          numPoses: 4,
           minPoseDetectionConfidence: 0.48,
           minPosePresenceConfidence: 0.48,
           minTrackingConfidence: 0.5,
@@ -53,10 +71,10 @@ self.onmessage = async (event: MessageEvent<VisionWorkerIncoming>) => {
     try {
       if (!landmarker) throw new Error("Vision model is not initialized");
       const result = landmarker.detectForVideo(event.data.frame, event.data.timestamp);
-      const poses = result.landmarks.map((landmarks, index) => ({
+      const poses = addAppearances(event.data.frame, result.landmarks.map((landmarks, index) => ({
         landmarks,
         worldLandmarks: result.worldLandmarks[index],
-      }));
+      })));
       respond({
         type: "frame",
         requestId: event.data.requestId,

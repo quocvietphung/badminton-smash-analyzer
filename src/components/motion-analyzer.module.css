@@ -114,7 +114,7 @@
 .cameraStage { position: relative; min-height: 600px; overflow: hidden; border: 1px solid var(--line); border-radius: 28px; background: #020809; box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 26px 70px rgba(0,8,7,.18); }
 .cameraStage video,
 .cameraStage canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.cameraStage canvas { z-index: 2; pointer-events: none; }
+.cameraStage canvas { z-index: 2; cursor: crosshair; pointer-events: auto; touch-action: none; }
 .cameraStage::after { position: absolute; z-index: 3; inset: 0; border: 1px solid rgba(255,255,255,.04); border-radius: inherit; background: linear-gradient(180deg, rgba(3,14,14,.08), transparent 55%, rgba(2,10,10,.42)); content: ""; pointer-events: none; }
 .focusMode { position: fixed; z-index: 100; inset: 0; min-height: 100dvh; border: 0; border-radius: 0; }
 .cameraBadges { position: absolute; z-index: 6; top: 18px; right: 18px; left: 18px; display: flex; align-items: center; gap: 7px; }
@@ -124,6 +124,27 @@
 .cameraBadges .liveBadge i { background: #59f3c5; box-shadow: 0 0 12px #59f3c5; }
 .cameraBadges button { display: grid; width: 36px; height: 36px; place-items: center; margin-left: auto; border: 1px solid rgba(255,255,255,.13); border-radius: 11px; background: rgba(3,13,13,.72); color: #eef9f6; cursor: pointer; backdrop-filter: blur(12px); }
 .cameraBadges button svg { width: 17px; }
+.targetPicker { position: absolute; z-index: 8; top: 66px; left: 18px; display: flex; max-width: min(720px,calc(100% - 36px)); align-items: center; gap: 12px; border: 1px solid rgba(119,255,216,.2); border-radius: 18px; background: rgba(3,14,15,.88); padding: 12px 13px; box-shadow: 0 16px 42px rgba(0,0,0,.24); backdrop-filter: blur(18px); }
+.targetSummary { display: flex; min-width: 210px; flex: 1 1 210px; flex-direction: column; }
+.targetSummary > span { color: #66efc5; font: 800 8px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; }
+.targetSummary > strong { margin-top: 4px; overflow: hidden; color: #effbf7; font-size: 11px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.targetSummary > small { margin-top: 4px; color: #82958f; font-size: 8px; line-height: 1.4; }
+.targetButtons { display: grid; min-width: min(380px,50vw); grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px; }
+.targetButtons button { display: grid; min-width: 0; min-height: 46px; grid-template-columns: 22px minmax(0,1fr) 15px; align-items: center; gap: 8px; border: 1px solid rgba(255,255,255,.13); border-radius: 12px; background: rgba(255,255,255,.045); color: #b6c8c2; padding: 7px 9px; text-align: left; cursor: pointer; }
+.targetOptionCopy { display: flex; min-width: 0; flex-direction: column; }
+.targetOptionCopy strong { overflow: hidden; color: #effbf7; font-size: 10px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.targetOptionCopy small { margin-top: 3px; overflow: hidden; color: #82958f; font-size: 8px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.shirtSwatch { position: relative; width: 20px; height: 20px; border: 1px solid rgba(255,255,255,.22); border-radius: 7px 7px 9px 9px; background: var(--shirt-color); box-shadow: inset 0 0 0 2px rgba(0,0,0,.12),0 4px 12px color-mix(in srgb,var(--shirt-color) 25%,transparent); }
+.shirtSwatch::before,.shirtSwatch::after { position: absolute; top: 1px; width: 7px; height: 7px; border-radius: 5px; background: var(--shirt-color); content: ""; }
+.shirtSwatch::before { left: -4px; transform: rotate(24deg); }
+.shirtSwatch::after { right: -4px; transform: rotate(-24deg); }
+.targetButtons button > svg { width: 14px; color: #082017; }
+.targetButtons button:hover:not(:disabled) { border-color: rgba(104,245,202,.5); color: #eafff8; }
+.targetButtons .targetActive { border-color: rgba(104,245,202,.7); background: rgba(104,245,202,.16); color: #dffff5; box-shadow: inset 0 0 0 1px rgba(104,245,202,.16),0 8px 20px rgba(89,243,197,.12); }
+.targetButtons .targetActive .targetOptionCopy strong { color: #baffea; }
+.targetButtons .targetActive .targetOptionCopy small { color: #9ad8c4; }
+.targetButtons .targetActive > svg { color: #68f5ca; }
+.targetButtons button:disabled { opacity: .72; cursor: not-allowed; }
 .cameraEmpty { position: absolute; z-index: 5; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: radial-gradient(circle at 50% 43%, rgba(79,242,193,.09), transparent 27%), linear-gradient(145deg,#071416,#030a0b); padding: 38px; text-align: center; }
 .cameraEmpty > span { display: grid; width: 74px; height: 74px; place-items: center; border: 1px solid rgba(102,245,202,.25); border-radius: 24px; background: rgba(91,242,197,.07); color: #61f3c7; box-shadow: 0 0 50px rgba(66,225,180,.1); }
 .cameraEmpty > span svg { width: 30px; }
@@ -274,6 +295,11 @@
   .cameraStage { min-height: 67vh; border-radius: 20px; }
   .cameraBadges { top: 12px; right: 12px; left: 12px; }
   .cameraBadges > span:nth-child(3) { display: none; }
+  .targetPicker { top: 58px; right: 12px; left: 12px; max-width: none; align-items: flex-start; flex-direction: column; gap: 8px; padding: 10px 11px; }
+  .targetSummary { min-width: 0; width: 100%; }
+  .targetSummary > strong { white-space: normal; }
+  .targetButtons { width: 100%; min-width: 0; }
+  .targetButtons button { min-height: 48px; }
   .liveEvent { right: 12px; bottom: 12px; left: 12px; min-height: 70px; }
   .liveEvent strong { font-size: 14px; }
   .livePanel { display: flex; border-radius: 20px; }
@@ -300,6 +326,8 @@
   .readiness article > span { width: 29px; height: 29px; }
   .readiness strong { font-size: 9px; }
   .cameraStage { min-height: 63vh; }
+  .targetButtons { grid-template-columns: 1fr; }
+  .targetPicker { max-height: 42vh; overflow-y: auto; }
   .cameraEmpty { padding: 24px; }
   .liveReps { grid-template-columns: repeat(3,1fr); }
   .profileBody { grid-template-columns: 1fr; }

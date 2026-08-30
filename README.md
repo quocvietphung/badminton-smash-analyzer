@@ -1,13 +1,17 @@
 # SmashLab Motion Science Studio
 
 Ứng dụng Next.js/PWA phân tích **kỹ thuật chuyển động cầu lông** ngay trong trình
-duyệt. Sản phẩm tập trung vào Motion Capture một vận động viên mỗi set, không còn
-phân tích rally, vị trí sân hoặc chiến thuật điều cầu.
+duyệt. Sản phẩm tập trung vào Motion Capture một vận động viên được khóa mục tiêu
+trong mỗi set, không còn phân tích rally, vị trí sân hoặc chiến thuật điều cầu.
 
 ## Bản hiện tại làm được
 
 - Nhận diện toàn thân bằng MediaPipe Pose Landmarker Lite và dùng thêm world
   landmarks 3D khi trình duyệt cung cấp.
+- Nhận tối đa bốn người trong khung; giữ ID bằng vị trí, vận tốc, kích thước cơ
+  thể và histogram màu vùng áo. Giao diện hiện option như “VĐV 1 · áo đỏ · bên
+  trái” và vẫn cho phép chạm trực tiếp vào người. Chỉ mục tiêu đã khóa được đưa
+  vào bộ chấm.
 - Chọn bài tập Smash, Backhand, Clear, Drop shot hoặc Drive; có chế độ tự nhận
   nhóm chuyển động.
 - Chuyển sang mô-đun **Footwork** để chấm chu kỳ Start → Approach → Hit →
@@ -41,15 +45,20 @@ phân tích rally, vị trí sân hoặc chiến thuật điều cầu.
 - Tốc độ chân, tốc độ trọng tâm, biên độ di chuyển và độ rộng trụ là đơn vị
   tương đối theo cơ thể; không phải m/s hoặc mét vì app không hiệu chuẩn sân.
 - Kết quả không thay thế huấn luyện viên và không dùng để chẩn đoán chấn thương.
+- Màu áo là mô tả ước lượng từ vùng thân để hỗ trợ chọn và giữ mục tiêu, không
+  phải nhận dạng danh tính. Ánh sáng màu, áo nhiều màu, che khuất hoặc hai người
+  mặc giống nhau có thể làm màu sai; khi đó nên chọn lại bằng cách chạm trực tiếp.
 
 ## Cách quay tốt nhất
 
-1. Phân tích một người mỗi set.
+1. Có thể để tối đa bốn người trong khung nhưng chỉ phân tích một mục tiêu mỗi set.
 2. Đặt điện thoại cố định ngang hông, cách người tập khoảng 3–5 m.
 3. Giữ đầu, hai tay và hai chân trong khung hình; tránh ngược sáng.
-4. Chọn mô-đun kỹ thuật vợt hoặc bộ pháp và tay thuận trước khi bấm
+4. Mở camera, chọn option theo màu áo/vị trí hoặc chạm vào VĐV cần phân tích
+   (nếu chỉ có một người app tự khóa).
+5. Chọn mô-đun kỹ thuật vợt hoặc bộ pháp và tay thuận trước khi bấm
    **Bắt đầu ghi set**.
-5. Thực hiện từng lần lặp có chuẩn bị, vung và hồi vị rõ ràng.
+6. Thực hiện từng lần lặp có chuẩn bị, vung và hồi vị rõ ràng.
 
 ## Chạy local
 
@@ -77,6 +86,10 @@ npm run build
 Vercel phân phối ứng dụng Next.js và chạy Route Handler cho AI Coach. Video,
 MediaPipe và Motion Capture chạy trong trình duyệt nên không cần Python, GPU
 cloud hoặc backend xử lý video.
+
+Chế độ nhiều người vẫn dùng model Pose Lite hiện có. Vercel chỉ phát ứng dụng;
+việc nhận tối đa bốn pose, giữ ID và khóa mục tiêu diễn ra trên điện thoại nên
+không làm tăng chi phí GPU/server của Vercel Hobby.
 
 Các biến production cho Coach: `AZURE_RESOURCE_NAME`, `AZURE_API_KEY`,
 `AZURE_OPENAI_DEPLOYMENT` và `AZURE_OPENAI_API_VERSION`.

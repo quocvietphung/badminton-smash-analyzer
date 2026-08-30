@@ -33,6 +33,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import {
   assessMotionWindow,
@@ -51,10 +52,26 @@ import {
   initialMetrics,
   type PreferredHand,
   type PoseFrameMemory,
-  type PoseLandmark,
   type SmashMetrics,
 } from "@/lib/pose-metrics";
 import type { PoseLiteSample } from "@/lib/pose-lite-classifier";
+import {
+  createMultiPoseTrackerState,
+  hitTestTrackedPose,
+  updateMultiPoseTracker,
+  type PoseObservation,
+  type TrackedPose,
+} from "@/lib/multi-pose-tracker";
+import {
+  appearanceDistance,
+  blendAppearance,
+  extractTorsoAppearance,
+  horizontalPosition,
+  shirtColorCss,
+  type HorizontalPosition,
+  type PoseAppearance,
+  type ShirtColor,
+} from "@/lib/pose-appearance";
 import type {
   VisionWorkerOutgoing,
   VisionWorkerPose,
@@ -75,8 +92,14 @@ import styles from "./motion-analyzer.module.css";
 type AnalyzerStatus = "idle" | "loading" | "live" | "error";
 type WorkerStatus = "checking" | "ready" | "fallback";
 type StorageStatus = "checking" | "indexeddb" | "localstorage";
+type TargetStatus = "waiting" | "selecting" | "locked" | "lost";
 type Connection = { start: number; end: number };
 type SwingCandidate = { startedAt: number; peakAt: number; peakEnergy: number };
+type AthleteOption = {
+  trackId: number;
+  shirtColor: ShirtColor;
+  position: HorizontalPosition;
+};
 type MotionSession = {
   id: string;
   createdAt: string;
@@ -90,6 +113,8 @@ type MotionSession = {
 const HISTORY_FALLBACK_KEY = "smashlab-motion-history-v1";
 const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm";
 const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
+const APPEARANCE_WIDTH = 320;
+const APPEARANCE_HEIGHT = 180;
 
 const TECHNIQUES: Array<{ value: TechniqueMode; label: string; short: string }> = [
   { value: "open", label: "Tự nhận nhóm động tác", short: "AUTO" },
@@ -105,6 +130,26 @@ const FOOTWORK_GROUP_LABELS = {
   court_pattern: { vi: "Mẫu di chuyển", en: "Movement patterns" },
   advanced: { vi: "Bật nhảy nâng cao", en: "Advanced jumps" },
 } as const;
+
+const SHIRT_COLOR_LABELS: Record<ShirtColor, { vi: string; en: string }> = {
+  red: { vi: "áo đỏ", en: "red shirt" },
+  orange: { vi: "áo cam", en: "orange shirt" },
+  yellow: { vi: "áo vàng", en: "yellow shirt" },
+  green: { vi: "áo xanh lá", en: "green shirt" },
+  blue: { vi: "áo xanh dương", en: "blue shirt" },
+  purple: { vi: "áo tím", en: "purple shirt" },
+  pink: { vi: "áo hồng", en: "pink shirt" },
+  white: { vi: "áo trắng", en: "white shirt" },
+  gray: { vi: "áo xám", en: "gray shirt" },
+  black: { vi: "áo đen", en: "black shirt" },
+  unknown: { vi: "màu áo chưa rõ", en: "shirt color unclear" },
+};
+
+const POSITION_LABELS: Record<HorizontalPosition, { vi: string; en: string }> = {
+  left: { vi: "bên trái", en: "left" },
+  center: { vi: "ở giữa", en: "center" },
+  right: { vi: "bên phải", en: "right" },
+};
 
 const PHASE_COPY: Record<MotionPhase, { vi: string; en: string }> = {
   ready: { vi: "Sẵn sàng", en: "Ready" },
@@ -129,8 +174,15 @@ const UI = {
     cameraOff: "Chưa mở",
     cameraOn: "Đang hoạt động",
     athlete: "Vận động viên",
-    athleteReady: "Đã nhận diện",
-    athleteMissing: "Chưa thấy trọn người",
+    athleteReady: "Đã khóa đúng mục tiêu",
+    athleteMissing: "Chưa chọn mục tiêu",
+    targetLabel: "Mục tiêu phân tích",
+    targetSelect: "Bạn muốn khóa VĐV nào?",
+    targetGuide: "Chọn theo màu áo và vị trí, hoặc chạm trực tiếp vào người.",
+    targetLocked: "Đã khóa VĐV",
+    targetLost: "Đang mất dấu mục tiêu · hệ thống đã tạm dừng chấm",
+    targetRequired: "Hãy chọn VĐV cần phân tích trước khi ghi set",
+    detectedPeople: "người trong khung",
     engine: "Motion Engine",
     engineReady: "Sẵn sàng",
     storage: "Lịch sử",
@@ -154,8 +206,8 @@ const UI = {
     demo: "Xem dữ liệu mẫu",
     focus: "Toàn màn hình",
     exitFocus: "Thoát toàn màn hình",
-    cameraTitle: "Đặt camera để thấy trọn một người",
-    cameraCopy: "Đặt điện thoại ngang hông, cách 3–5 m. Giữ đầu, hai tay và hai chân trong khung hình.",
+    cameraTitle: "Đặt camera thấy trọn VĐV cần phân tích",
+    cameraCopy: "Có thể có tối đa 4 người trong khung. Sau khi mở camera, chọn option theo màu áo/vị trí hoặc chạm vào đúng VĐV.",
     footworkCameraCopy: "Đặt máy ngang hông, thấy rõ hai bàn chân và chừa đủ khoảng trống cho toàn bộ hướng di chuyển.",
     liveWaiting: "Đang chờ một nhịp vung rõ",
     footworkWaiting: "Đang chờ một chu kỳ chân rõ",
@@ -211,8 +263,15 @@ const UI = {
     cameraOff: "Not started",
     cameraOn: "Active",
     athlete: "Athlete",
-    athleteReady: "Detected",
-    athleteMissing: "Full body not found",
+    athleteReady: "Target locked",
+    athleteMissing: "No target selected",
+    targetLabel: "Analysis target",
+    targetSelect: "Which athlete do you want to lock?",
+    targetGuide: "Choose by shirt color and position, or tap the athlete directly.",
+    targetLocked: "Locked on athlete",
+    targetLost: "Target temporarily lost · scoring is paused",
+    targetRequired: "Select the athlete to analyze before recording",
+    detectedPeople: "people in frame",
     engine: "Motion Engine",
     engineReady: "Ready",
     storage: "History",
@@ -236,8 +295,8 @@ const UI = {
     demo: "View sample data",
     focus: "Full screen",
     exitFocus: "Exit full screen",
-    cameraTitle: "Frame one athlete from head to toe",
-    cameraCopy: "Place the phone around hip height and 3–5 m away. Keep the head, both hands and both feet visible.",
+    cameraTitle: "Frame the athlete you want to analyze",
+    cameraCopy: "Up to four people may be visible. Open the camera, then choose by shirt color/position or tap the athlete directly.",
     footworkCameraCopy: "Place the camera at hip height, keep both feet visible and leave room for the complete movement path.",
     liveWaiting: "Waiting for a distinct swing",
     footworkWaiting: "Waiting for a distinct footwork cycle",
@@ -285,42 +344,112 @@ const UI = {
   },
 } as const;
 
-function drawPose(
+function drawTrackedPoses(
   canvas: HTMLCanvasElement,
-  landmarks: PoseLandmark[],
+  poses: TrackedPose[],
   connections: Connection[],
+  selectedTrackId: number | null,
+  language: StudioLanguage,
 ) {
   const context = canvas.getContext("2d");
   if (!context) return;
   context.clearRect(0, 0, canvas.width, canvas.height);
   context.lineCap = "round";
   context.lineJoin = "round";
-  context.strokeStyle = "#68f5ca";
-  context.fillStyle = "#dffdf4";
-  context.lineWidth = Math.max(2, canvas.width / 520);
-  context.shadowColor = "#55efc1";
-  context.shadowBlur = 9;
-  connections.forEach(({ start, end }) => {
-    const left = landmarks[start];
-    const right = landmarks[end];
-    if (!left || !right || (left.visibility ?? 1) < 0.42 || (right.visibility ?? 1) < 0.42) return;
-    context.beginPath();
-    context.moveTo(left.x * canvas.width, left.y * canvas.height);
-    context.lineTo(right.x * canvas.width, right.y * canvas.height);
-    context.stroke();
-  });
-  context.shadowBlur = 0;
-  [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28].forEach((index) => {
-    const point = landmarks[index];
-    if (!point || (point.visibility ?? 1) < 0.42) return;
-    context.beginPath();
-    context.arc(point.x * canvas.width, point.y * canvas.height, Math.max(3, canvas.width / 220), 0, Math.PI * 2);
-    context.fill();
+  poses.forEach((pose) => {
+    const selected = pose.trackId === selectedTrackId;
+    const accent = selected ? "#68f5ca" : "#ffd96a";
+    const softAccent = selected ? "#dffdf4" : "#fff4bd";
+    context.save();
+    context.strokeStyle = accent;
+    context.fillStyle = softAccent;
+    context.globalAlpha = selected ? 1 : 0.72;
+    context.lineWidth = Math.max(selected ? 2.4 : 1.5, canvas.width / (selected ? 500 : 720));
+    context.shadowColor = accent;
+    context.shadowBlur = selected ? 10 : 3;
+    connections.forEach(({ start, end }) => {
+      const left = pose.landmarks[start];
+      const right = pose.landmarks[end];
+      if (!left || !right || (left.visibility ?? 1) < 0.42 || (right.visibility ?? 1) < 0.42) return;
+      context.beginPath();
+      context.moveTo(left.x * canvas.width, left.y * canvas.height);
+      context.lineTo(right.x * canvas.width, right.y * canvas.height);
+      context.stroke();
+    });
+    context.shadowBlur = 0;
+    [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28].forEach((index) => {
+      const point = pose.landmarks[index];
+      if (!point || (point.visibility ?? 1) < 0.42) return;
+      context.beginPath();
+      context.arc(point.x * canvas.width, point.y * canvas.height, Math.max(selected ? 3 : 2, canvas.width / 240), 0, Math.PI * 2);
+      context.fill();
+    });
+
+    const x = pose.bounds.left * canvas.width;
+    const y = pose.bounds.top * canvas.height;
+    const width = pose.bounds.width * canvas.width;
+    const height = pose.bounds.height * canvas.height;
+    context.strokeStyle = accent;
+    context.lineWidth = Math.max(selected ? 3 : 2, canvas.width / 640);
+    context.setLineDash(selected ? [] : [8, 7]);
+    context.strokeRect(x, y, width, height);
+    context.setLineDash([]);
+
+    const color = pose.appearance?.shirtColor ?? "unknown";
+    const colorLabel = SHIRT_COLOR_LABELS[color][language].replace(/^áo /, "").replace(/ shirt$/, "");
+    const prefix = selected ? (language === "vi" ? "ĐÃ KHÓA" : "LOCKED") : (language === "vi" ? "VĐV" : "ATHLETE");
+    const label = `${prefix} ${pose.trackId} · ${colorLabel}`.toUpperCase();
+    const fontSize = Math.max(12, Math.round(canvas.width / 75));
+    context.font = `800 ${fontSize}px ui-monospace, SFMono-Regular, monospace`;
+    const labelWidth = context.measureText(label).width + 20;
+    const labelHeight = fontSize + 14;
+    const labelY = Math.max(0, y - labelHeight - 5);
+    context.globalAlpha = 0.94;
+    context.fillStyle = selected ? "#59f3c5" : "#f3cd5c";
+    context.fillRect(x, labelY, labelWidth, labelHeight);
+    context.fillStyle = "#03110d";
+    context.textBaseline = "middle";
+    context.fillText(label, x + 10, labelY + labelHeight / 2);
+    context.restore();
   });
 }
 
 function phaseLabel(phase: MotionPhase, language: StudioLanguage) {
   return PHASE_COPY[phase][language];
+}
+
+function shirtColorLabel(color: ShirtColor, language: StudioLanguage) {
+  return SHIRT_COLOR_LABELS[color][language];
+}
+
+function positionLabel(position: HorizontalPosition, language: StudioLanguage) {
+  return POSITION_LABELS[position][language];
+}
+
+function addPoseAppearances(
+  video: HTMLVideoElement,
+  scratchCanvas: HTMLCanvasElement,
+  poses: VisionWorkerPose[],
+): PoseObservation[] {
+  try {
+    scratchCanvas.width = APPEARANCE_WIDTH;
+    scratchCanvas.height = APPEARANCE_HEIGHT;
+    const context = scratchCanvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return poses;
+    context.drawImage(video, 0, 0, APPEARANCE_WIDTH, APPEARANCE_HEIGHT);
+    const frame = context.getImageData(0, 0, APPEARANCE_WIDTH, APPEARANCE_HEIGHT);
+    return poses.map((pose) => {
+      const appearance = extractTorsoAppearance(
+        frame.data,
+        APPEARANCE_WIDTH,
+        APPEARANCE_HEIGHT,
+        pose.landmarks,
+      );
+      return appearance ? { ...pose, appearance } : pose;
+    });
+  } catch {
+    return poses;
+  }
 }
 
 function livePhaseLabel(phase: SmashMetrics["phase"], language: StudioLanguage) {
@@ -547,6 +676,9 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   const [recording, setRecording] = useState(false);
   const [source, setSource] = useState<AnalysisSource>("none");
   const [athleteDetected, setAthleteDetected] = useState(false);
+  const [visibleAthletes, setVisibleAthletes] = useState<AthleteOption[]>([]);
+  const [selectedTrackId, setSelectedTrackId] = useState<number | null>(null);
+  const [targetStatus, setTargetStatus] = useState<TargetStatus>("waiting");
   const [workerStatus, setWorkerStatus] = useState<WorkerStatus>("checking");
   const [storageStatus, setStorageStatus] = useState<StorageStatus>("checking");
   const [trainingModule, setTrainingModule] = useState<TrainingModule>("stroke");
@@ -573,6 +705,13 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   const workerInitializedRef = useRef(false);
   const workerFrameBusyRef = useRef(false);
   const lastVideoTimeRef = useRef(-1);
+  const trackerRef = useRef(createMultiPoseTrackerState());
+  const trackedPosesRef = useRef<TrackedPose[]>([]);
+  const selectedTrackIdRef = useRef<number | null>(null);
+  const targetStatusRef = useRef<TargetStatus>("waiting");
+  const visibleAthletesSignatureRef = useRef("");
+  const appearanceCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const selectedAppearanceRef = useRef<PoseAppearance | undefined>(undefined);
   const memoryRef = useRef<PoseFrameMemory | null>(null);
   const lastContactRef = useRef(-10_000);
   const samplesRef = useRef<PoseLiteSample[]>([]);
@@ -589,6 +728,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   const lastUiUpdateRef = useRef(0);
 
   const latest = movements.at(-1) ?? null;
+  const selectedAthleteOption = visibleAthletes.find((athlete) => athlete.trackId === selectedTrackId) ?? null;
   const activeSummary = useMemo(
     () => summary ?? (movements.length ? createSummary(movements, language) : null),
     [language, movements, summary],
@@ -745,16 +885,112 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     });
   }, [classifyMotion, language]);
 
+  const resetTargetMotion = useCallback(() => {
+    memoryRef.current = null;
+    samplesRef.current = [];
+    candidateRef.current = null;
+    lastContactRef.current = -10_000;
+  }, []);
+
+  const selectAthlete = useCallback((trackId: number) => {
+    if (recordingRef.current) return;
+    const target = trackedPosesRef.current.find((pose) => pose.trackId === trackId);
+    selectedTrackIdRef.current = trackId;
+    selectedAppearanceRef.current = target?.observedAppearance ?? target?.appearance;
+    targetStatusRef.current = "locked";
+    setSelectedTrackId(trackId);
+    setTargetStatus("locked");
+    setAthleteDetected(true);
+    resetTargetMotion();
+    setCurrentMessage(copy.notRecording);
+  }, [copy.notRecording, resetTargetMotion]);
+
   const processPoses = useCallback((poses: VisionWorkerPose[], now: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const pose = poses[0];
-    setAthleteDetected(Boolean(pose));
-    if (!pose) {
-      canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+    let observations: PoseObservation[] = poses;
+    const video = videoRef.current;
+    if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+      && poses.some((pose) => !pose.appearance)) {
+      appearanceCanvasRef.current ??= document.createElement("canvas");
+      observations = addPoseAppearances(video, appearanceCanvasRef.current, poses);
+    }
+    const tracked = updateMultiPoseTracker(trackerRef.current, observations, now);
+    trackerRef.current = tracked.state;
+    trackedPosesRef.current = tracked.poses;
+    const athleteOptions = tracked.poses.map((pose): AthleteOption => ({
+      trackId: pose.trackId,
+      shirtColor: pose.appearance && pose.appearance.confidence >= 0.34
+        ? pose.appearance.shirtColor
+        : "unknown",
+      position: horizontalPosition(pose.bounds.centerX),
+    }));
+    const signature = athleteOptions
+      .map((option) => `${option.trackId}:${option.shirtColor}:${option.position}`)
+      .join(",");
+    if (signature !== visibleAthletesSignatureRef.current) {
+      visibleAthletesSignatureRef.current = signature;
+      setVisibleAthletes(athleteOptions);
+    }
+
+    let targetId = selectedTrackIdRef.current;
+    if (targetId === null && tracked.poses.length === 1) {
+      targetId = tracked.poses[0].trackId;
+      selectedTrackIdRef.current = targetId;
+      selectedAppearanceRef.current = tracked.poses[0].observedAppearance ?? tracked.poses[0].appearance;
+      setSelectedTrackId(targetId);
+      resetTargetMotion();
+    }
+    let pose = targetId === null
+      ? null
+      : tracked.poses.find((entry) => entry.trackId === targetId) ?? null;
+    const selectedAppearance = selectedAppearanceRef.current;
+    const currentAppearance = pose?.observedAppearance ?? pose?.appearance;
+    if (pose && selectedAppearance && currentAppearance) {
+      const knownColorMismatch = selectedAppearance.shirtColor !== "unknown"
+        && currentAppearance.shirtColor !== "unknown"
+        && selectedAppearance.shirtColor !== currentAppearance.shirtColor
+        && selectedAppearance.confidence >= 0.4
+        && currentAppearance.confidence >= 0.4;
+      const appearanceMismatch = appearanceDistance(selectedAppearance, currentAppearance) > 0.68;
+      if (knownColorMismatch && appearanceMismatch) {
+        pose = null;
+      } else {
+        selectedAppearanceRef.current = blendAppearance(selectedAppearance, currentAppearance, 0.16);
+      }
+    } else if (pose && currentAppearance) {
+      selectedAppearanceRef.current = currentAppearance;
+    }
+    drawTrackedPoses(canvas, tracked.poses, connectionsRef.current, pose ? targetId : null, language);
+
+    if (targetId === null) {
+      const nextStatus: TargetStatus = tracked.poses.length > 1 ? "selecting" : "waiting";
+      if (targetStatusRef.current !== nextStatus) {
+        targetStatusRef.current = nextStatus;
+        setTargetStatus(nextStatus);
+      }
+      setAthleteDetected(false);
+      resetTargetMotion();
       return;
     }
-    drawPose(canvas, pose.landmarks, connectionsRef.current);
+    if (!pose) {
+      if (targetStatusRef.current !== "lost") {
+        targetStatusRef.current = "lost";
+        setTargetStatus("lost");
+        setCurrentMessage(copy.targetLost);
+      }
+      setAthleteDetected(false);
+      resetTargetMotion();
+      return;
+    }
+    if (targetStatusRef.current !== "locked") {
+      targetStatusRef.current = "locked";
+      setTargetStatus("locked");
+      setCurrentMessage(recordingRef.current
+        ? trainingModuleRef.current === "footwork" ? copy.footworkWaiting : copy.liveWaiting
+        : copy.notRecording);
+    }
+    setAthleteDetected(true);
     const analysis = analyzePose(
       pose.landmarks,
       now,
@@ -841,9 +1077,25 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
         registerMovement(windowSamples, analysis.metrics.dominantSide);
       }
     }
-  }, [registerMovement]);
+  }, [copy.footworkWaiting, copy.liveWaiting, copy.notRecording, copy.targetLost, language, registerMovement, resetTargetMotion]);
 
   useEffect(() => { processFrameRef.current = processPoses; }, [processPoses]);
+
+  const selectAthleteFromCamera = useCallback((event: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (status !== "live" || recordingRef.current) return;
+    const canvas = canvasRef.current;
+    if (!canvas || canvas.width <= 0 || canvas.height <= 0) return;
+    const rect = canvas.getBoundingClientRect();
+    const scale = Math.max(rect.width / canvas.width, rect.height / canvas.height);
+    const renderedWidth = canvas.width * scale;
+    const renderedHeight = canvas.height * scale;
+    const offsetX = (rect.width - renderedWidth) / 2;
+    const offsetY = (rect.height - renderedHeight) / 2;
+    const x = (event.clientX - rect.left - offsetX) / renderedWidth;
+    const y = (event.clientY - rect.top - offsetY) / renderedHeight;
+    const target = hitTestTrackedPose(trackedPosesRef.current, x, y);
+    if (target) selectAthlete(target.trackId);
+  }, [selectAthlete, status]);
 
   const startLoop = useCallback(() => {
     const detect = () => {
@@ -897,6 +1149,17 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   const startCamera = useCallback(async () => {
     setStatus("loading");
     setErrorMessage("");
+    trackerRef.current = createMultiPoseTrackerState();
+    trackedPosesRef.current = [];
+    selectedTrackIdRef.current = null;
+    selectedAppearanceRef.current = undefined;
+    targetStatusRef.current = "waiting";
+    visibleAthletesSignatureRef.current = "";
+    setVisibleAthletes([]);
+    setSelectedTrackId(null);
+    setTargetStatus("waiting");
+    setAthleteDetected(false);
+    resetTargetMotion();
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
@@ -918,7 +1181,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
         landmarkerRef.current = await PoseLandmarker.createFromOptions(vision, {
           baseOptions: { modelAssetPath: MODEL_URL, delegate: "CPU" },
           runningMode: "VIDEO",
-          numPoses: 1,
+          numPoses: 4,
           minPoseDetectionConfidence: 0.48,
           minPosePresenceConfidence: 0.48,
           minTrackingConfidence: 0.5,
@@ -937,7 +1200,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
       setStatus("error");
       setErrorMessage(error instanceof Error ? error.message : "Camera unavailable");
     }
-  }, [copy.notRecording, initializeWorker, startLoop]);
+  }, [copy.notRecording, initializeWorker, resetTargetMotion, startLoop]);
 
   const stopCamera = useCallback(() => {
     runningRef.current = false;
@@ -950,9 +1213,19 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     landmarkerRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     canvasRef.current?.getContext("2d")?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    trackerRef.current = createMultiPoseTrackerState();
+    trackedPosesRef.current = [];
+    selectedTrackIdRef.current = null;
+    selectedAppearanceRef.current = undefined;
+    targetStatusRef.current = "waiting";
+    visibleAthletesSignatureRef.current = "";
+    setVisibleAthletes([]);
+    setSelectedTrackId(null);
+    setTargetStatus("waiting");
     setAthleteDetected(false);
     setStatus("idle");
-  }, []);
+    resetTargetMotion();
+  }, [resetTargetMotion]);
 
   const resetSet = useCallback((nextSource: AnalysisSource = "none") => {
     movementsRef.current = [];
@@ -1002,6 +1275,10 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   const toggleRecording = useCallback(() => {
     if (status !== "live") return;
     if (!recordingRef.current) {
+      if (targetStatusRef.current !== "locked" || selectedTrackIdRef.current === null) {
+        setCurrentMessage(copy.targetRequired);
+        return;
+      }
       resetSet("live");
       recordingRef.current = true;
       setRecording(true);
@@ -1014,7 +1291,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     setSummary(nextSummary);
     saveCurrentSession(nextSummary);
     onNavigate("sessions");
-  }, [copy.footworkWaiting, copy.liveWaiting, language, onNavigate, resetSet, saveCurrentSession, status]);
+  }, [copy.footworkWaiting, copy.liveWaiting, copy.targetRequired, language, onNavigate, resetSet, saveCurrentSession, status]);
 
   const loadDemo = useCallback(() => {
     const demo = createDemoMovements(trainingModule, mode, footworkMode);
@@ -1079,14 +1356,14 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
         <label><span>{trainingModule === "footwork" ? copy.dominantSide : copy.hand}</span><select value={preferredHand} disabled={recording} onChange={(event) => setPreferredHand(event.target.value as PreferredHand)}><option value="auto">{copy.autoHand}</option><option value="right">{copy.right}</option><option value="left">{copy.left}</option></select></label>
         <div className={styles.setupActions}>
           {status !== "live" ? <button type="button" className={styles.secondaryButton} disabled={status === "loading"} onClick={() => void startCamera()}><Camera />{status === "loading" ? copy.opening : copy.openCamera}</button> : <button type="button" className={styles.secondaryButton} onClick={stopCamera}><Pause />{copy.stopCamera}</button>}
-          <button type="button" className={recording ? styles.stopButton : styles.primaryButton} disabled={status !== "live"} onClick={toggleRecording}>{recording ? <Pause /> : <Play />}{recording ? copy.stopSet : copy.startSet}</button>
+          <button type="button" className={recording ? styles.stopButton : styles.primaryButton} disabled={status !== "live" || (!recording && targetStatus !== "locked")} onClick={toggleRecording}>{recording ? <Pause /> : <Play />}{recording ? copy.stopSet : copy.startSet}</button>
           <button type="button" className={styles.ghostButton} onClick={loadDemo}><Sparkles />{copy.demo}</button>
         </div>
       </section>
 
       <section className={styles.readiness} hidden={view !== "live"}>
         <article className={status === "live" ? styles.ready : ""}><span>{status === "live" ? <Check /> : <Camera />}</span><div><small>{copy.camera}</small><strong>{status === "live" ? copy.cameraOn : copy.cameraOff}</strong></div></article>
-        <article className={athleteDetected ? styles.ready : ""}><span>{athleteDetected ? <UserRoundCheck /> : <CircleDashed />}</span><div><small>{copy.athlete}</small><strong>{athleteDetected ? copy.athleteReady : copy.athleteMissing}</strong></div></article>
+        <article className={athleteDetected ? styles.ready : ""}><span>{athleteDetected ? <UserRoundCheck /> : <CircleDashed />}</span><div><small>{copy.athlete}</small><strong>{athleteDetected && selectedTrackId !== null ? `${copy.athleteReady} · #${selectedTrackId}` : targetStatus === "lost" ? copy.targetLost : copy.athleteMissing}</strong></div></article>
         <article className={workerStatus !== "checking" ? styles.ready : ""}><span>{workerStatus !== "checking" ? <Check /> : <CircleDashed />}</span><div><small>{copy.engine}</small><strong>{workerStatus !== "checking" ? copy.engineReady : "…"}</strong></div></article>
         <article className={storageStatus !== "checking" ? styles.ready : ""}><span><History /></span><div><small>{copy.storage}</small><strong>{storageStatus === "indexeddb" ? "IndexedDB" : storageStatus === "localstorage" ? "Local" : "…"}</strong></div></article>
       </section>
@@ -1099,13 +1376,44 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
       <div className={styles.liveWorkspace} hidden={view !== "live"}>
         <div className={`${styles.cameraStage} ${focusMode ? styles.focusMode : ""}`}>
           <video ref={videoRef} playsInline muted />
-          <canvas ref={canvasRef} />
+          <canvas ref={canvasRef} onPointerDown={selectAthleteFromCamera} />
           <div className={styles.cameraBadges}>
             <span className={status === "live" ? styles.liveBadge : ""}><i />{status === "live" ? "LIVE" : "OFF"}</span>
             <span>{trainingModule === "stroke" ? TECHNIQUES.find((item) => item.value === mode)?.short : FOOTWORK_CATALOG.find((item) => item.value === footworkMode)?.short}</span>
             <span>{preferredHand === "left" ? "LEFT" : preferredHand === "right" ? "RIGHT" : "AUTO HAND"}</span>
             <button type="button" onClick={() => setFocusMode((current) => !current)} aria-label={focusMode ? copy.exitFocus : copy.focus}>{focusMode ? <Minimize2 /> : <Maximize2 />}</button>
           </div>
+          {status === "live" ? <div className={styles.targetPicker} aria-live="polite">
+            <div className={styles.targetSummary}>
+              <span>{copy.targetLabel}</span>
+              <strong>{targetStatus === "locked" && selectedTrackId !== null
+                ? `${copy.targetLocked} #${selectedTrackId}${selectedAthleteOption ? ` · ${shirtColorLabel(selectedAthleteOption.shirtColor, language)}` : ""}`
+                : targetStatus === "lost" ? copy.targetLost : copy.targetSelect}</strong>
+              <small>{visibleAthletes.length} {copy.detectedPeople} · {copy.targetGuide}</small>
+            </div>
+            {visibleAthletes.length ? <div className={styles.targetButtons} aria-label={copy.targetLabel}>
+              {visibleAthletes.map((athlete) => <button
+                type="button"
+                key={athlete.trackId}
+                className={selectedTrackId === athlete.trackId ? styles.targetActive : ""}
+                disabled={recording}
+                onClick={() => selectAthlete(athlete.trackId)}
+                aria-label={`${language === "vi" ? "Khóa" : "Lock"} ${language === "vi" ? "VĐV" : "athlete"} ${athlete.trackId}, ${shirtColorLabel(athlete.shirtColor, language)}, ${positionLabel(athlete.position, language)}`}
+                aria-pressed={selectedTrackId === athlete.trackId}
+              >
+                <i
+                  className={styles.shirtSwatch}
+                  style={{ "--shirt-color": shirtColorCss(athlete.shirtColor) } as CSSProperties}
+                  aria-hidden="true"
+                />
+                <span className={styles.targetOptionCopy}>
+                  <strong>{language === "vi" ? "VĐV" : "Athlete"} {athlete.trackId}</strong>
+                  <small>{shirtColorLabel(athlete.shirtColor, language)} · {positionLabel(athlete.position, language)}</small>
+                </span>
+                {selectedTrackId === athlete.trackId ? <Check aria-hidden="true" /> : null}
+              </button>)}
+            </div> : null}
+          </div> : null}
           {status !== "live" ? <div className={styles.cameraEmpty}><span>{trainingModule === "footwork" ? <Footprints /> : <Activity />}</span><h3>{copy.cameraTitle}</h3><p>{trainingModule === "footwork" ? copy.footworkCameraCopy : copy.cameraCopy}</p><button type="button" onClick={() => void startCamera()} disabled={status === "loading"}><Camera />{status === "loading" ? copy.opening : copy.openCamera}</button></div> : null}
           <div className={styles.liveEvent}><span>{recording ? copy.recording : copy.phase}</span><strong>{recording ? currentMessage : status === "live" ? trainingModule === "footwork" ? liveFootworkPhaseLabel(metrics, language) : livePhaseLabel(metrics.phase, language) : trainingModule === "footwork" ? copy.footworkWaiting : copy.liveWaiting}</strong></div>
           {recording ? <div className={styles.recordingPulse} aria-hidden="true" /> : null}
@@ -1203,7 +1511,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
       <section className={styles.diagnostics} hidden={view !== "settings"}>
         <div><span>{copy.diagnostics}</span><h2>{copy.diagnostics}</h2><p>{copy.diagnosticsCopy}</p></div>
         <div className={styles.diagnosticGrid}>
-          <article><Activity /><span><small>Pose model</small><strong>MediaPipe Pose Lite</strong><em>{workerStatus === "ready" ? "Web Worker" : "Main thread fallback"}</em></span></article>
+          <article><Activity /><span><small>Pose model</small><strong>MediaPipe Pose Lite · 4 poses</strong><em>{workerStatus === "ready" ? "Web Worker · target lock" : "Main thread fallback · target lock"}</em></span></article>
           <article><Armchair /><span><small>Motion features</small><strong>3D joints + temporal window</strong><em>6-phase assessment</em></span></article>
           <article><Footprints /><span><small>Footwork engine</small><strong>Hips + knees + ankles</strong><em>BWF 4-phase movement cycle</em></span></article>
           <article><Hand /><span><small>Racket hand</small><strong>{preferredHand === "auto" ? copy.autoHand : preferredHand === "right" ? copy.right : copy.left}</strong><em>Locked per set</em></span></article>

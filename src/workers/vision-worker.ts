@@ -3,6 +3,8 @@
 import {
   classifyPoseWindow,
 } from "../lib/pose-lite-classifier";
+import { assessMotionWindow } from "../lib/motion-technique";
+import { assessFootworkWindow } from "../lib/footwork-analysis";
 import type {
   VisionWorkerIncoming,
   VisionWorkerOutgoing,
@@ -28,7 +30,7 @@ self.onmessage = async (event: MessageEvent<VisionWorkerIncoming>) => {
         landmarker = await PoseLandmarker.createFromOptions(vision, {
           baseOptions: { modelAssetPath: event.data.modelUrl, delegate: "CPU" },
           runningMode: "VIDEO",
-          numPoses: 2,
+          numPoses: 1,
           minPoseDetectionConfidence: 0.48,
           minPosePresenceConfidence: 0.48,
           minTrackingConfidence: 0.5,
@@ -78,6 +80,22 @@ self.onmessage = async (event: MessageEvent<VisionWorkerIncoming>) => {
       type: "result",
       requestId: event.data.requestId,
       result: classifyPoseWindow(event.data.samples, { drillMode: event.data.drillMode }),
+    });
+    return;
+  }
+  if (event.data.type === "analyzeMotion") {
+    respond({
+      type: "motionResult",
+      requestId: event.data.requestId,
+      result: assessMotionWindow(event.data.samples, event.data.mode, event.data.dominantSide),
+    });
+    return;
+  }
+  if (event.data.type === "analyzeFootwork") {
+    respond({
+      type: "footworkResult",
+      requestId: event.data.requestId,
+      result: assessFootworkWindow(event.data.samples, event.data.mode, event.data.dominantSide),
     });
     return;
   }

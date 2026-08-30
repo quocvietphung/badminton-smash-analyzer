@@ -52,3 +52,17 @@ test("tay vợt tự nhận được khóa và không đổi vì một frame nhi
   assert.equal(result.metrics.dominantSide, "right");
   assert.equal(result.metrics.handLocked, true);
 });
+
+test("ghi nhận chuyển động cổ chân và trọng tâm cho mô-đun bộ pháp", () => {
+  const first = analyzePose(athletePose(), 0, null, -10_000, { preferredHand: "right" });
+  const moved = athletePose();
+  moved[23] = { ...moved[23], x: moved[23].x + 0.035 };
+  moved[24] = { ...moved[24], x: moved[24].x + 0.035 };
+  moved[27] = { ...moved[27], x: moved[27].x + 0.07, y: moved[27].y - 0.025 };
+  moved[28] = { ...moved[28], x: moved[28].x + 0.02 };
+  const result = analyzePose(moved, 40, first.memory, -10_000, { preferredHand: "right" });
+  assert.ok(result.metrics.footSpeed > 0);
+  assert.ok(result.metrics.centerSpeed > 0);
+  assert.ok(result.metrics.bodyScale > 0);
+  assert.ok(result.metrics.landingSymmetry >= 0 && result.metrics.landingSymmetry <= 100);
+});

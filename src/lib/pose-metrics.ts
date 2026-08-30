@@ -32,6 +32,13 @@ export type PoseFrameMemory = {
   rightActivity: number;
   activeFrames: number;
   bodyScale: number;
+  leftAnkle: PoseLandmark;
+  rightAnkle: PoseLandmark;
+  hipMidpoint: PoseLandmark;
+  leftAnkleSpeed: number;
+  rightAnkleSpeed: number;
+  centerSpeed: number;
+  centerVerticalSpeed: number;
 };
 
 export type SmashMetrics = {
@@ -50,6 +57,26 @@ export type SmashMetrics = {
   isContact: boolean;
   handLocked: boolean;
   trunkRotation: number;
+  balanceScore: number;
+  stanceWidth: number;
+  wristAcrossBody: number;
+  lateralReach: number;
+  leftKneeFlexion: number;
+  rightKneeFlexion: number;
+  leftAnkleSpeed: number;
+  rightAnkleSpeed: number;
+  footSpeed: number;
+  centerSpeed: number;
+  verticalBounce: number;
+  landingSymmetry: number;
+  ankleHeightDifference: number;
+  centerX: number;
+  centerY: number;
+  leftAnkleX: number;
+  leftAnkleY: number;
+  rightAnkleX: number;
+  rightAnkleY: number;
+  bodyScale: number;
 };
 
 export type PoseAnalysisOptions = {
@@ -107,6 +134,16 @@ function wristVelocity(
   // Preserve the former score range while removing most zoom/distance dependence.
   const normalizedScale = 0.22 / Math.max(0.08, bodyScale);
   return clamp((distance(current, previous) / elapsedSeconds) * normalizedScale, 0, 6);
+}
+
+function normalizedPointVelocity(
+  current: PoseLandmark,
+  previous: PoseLandmark | undefined,
+  elapsedSeconds: number,
+  bodyScale: number,
+) {
+  if (!previous || elapsedSeconds <= 0 || elapsedSeconds > 0.25) return 0;
+  return clamp(distance(current, previous) / elapsedSeconds / Math.max(0.08, bodyScale), 0, 12);
 }
 
 function angleVelocity(current: number, previous: number | undefined, elapsedSeconds: number) {
@@ -225,7 +262,9 @@ export function analyzePose(
   const shoulderAngle = calculateAngle(geometryElbow, geometryShoulder, geometryHip);
   const leftKneeAngle = calculateAngle(leftHip, leftKnee, leftAnkle);
   const rightKneeAngle = calculateAngle(rightHip, rightKnee, rightAnkle);
-  const kneeFlexion = clamp(180 - (leftKneeAngle + rightKneeAngle) / 2, 0, 120);
+  const leftKneeFlexion = clamp(180 - leftKneeAngle, 0, 120);
+  const rightKneeFlexion = clamp(180 - rightKneeAngle, 0, 120);
+  const kneeFlexion = (leftKneeFlexion + rightKneeFlexion) / 2;
   const armAngularSpeed = isLeft ? leftArmAngularSpeed : rightArmAngularSpeed;
   const shoulderLine = shoulderMidpoint.y;
   const hipLine = hipMidpoint.y;
@@ -243,6 +282,35 @@ export function analyzePose(
   );
   const hipSlope = Math.atan2(rightHip.y - leftHip.y, rightHip.x - leftHip.x);
   const trunkRotation = clamp(Math.abs(shoulderSlope - hipSlope) * (180 / Math.PI), 0, 90);
+  const bodyLean = Math.abs(shoulderMidpoint.x - hipMidpoint.x) / bodyScale;
+  const stanceWidth = clamp(distance(leftAnkle, rightAnkle) / bodyScale, 0, 2);
+  const balanceScore = clamp(100 - bodyLean * 115 - Math.max(0, 0.28 - stanceWidth) * 55, 0, 100);
+  const torsoCenterX = (leftShoulder.x + rightShoulder.x + leftHip.x + rightHip.x) / 4;
+  const acrossDistance = isLeft ? wrist.x - torsoCenterX : torsoCenterX - wrist.x;
+  const wristAcrossBody = clamp((acrossDistance / bodyScale) * 100, 0, 100);
+  const lateralReach = clamp((Math.abs(wrist.x - shoulder.x) / bodyScale) * 78, 0, 100);
+  const leftAnkleSpeed = smoothVelocity(
+    normalizedPointVelocity(leftAnkle, previous?.leftAnkle, elapsedSeconds, velocityScale),
+    previous?.leftAnkleSpeed,
+    0.4,
+  );
+  const rightAnkleSpeed = smoothVelocity(
+    normalizedPointVelocity(rightAnkle, previous?.rightAnkle, elapsedSeconds, velocityScale),
+    previous?.rightAnkleSpeed,
+    0.4,
+  );
+  const centerSpeed = smoothVelocity(
+    normalizedPointVelocity(hipMidpoint, previous?.hipMidpoint, elapsedSeconds, velocityScale),
+    previous?.centerSpeed,
+    0.38,
+  );
+  const rawVerticalSpeed = previous && elapsedSeconds > 0 && elapsedSeconds <= 0.25
+    ? Math.abs(hipMidpoint.y - previous.hipMidpoint.y) / elapsedSeconds / Math.max(0.08, velocityScale)
+    : 0;
+  const centerVerticalSpeed = smoothVelocity(rawVerticalSpeed, previous?.centerVerticalSpeed, 0.38);
+  const ankleHeightDifference = Math.abs(leftAnkle.y - rightAnkle.y) / bodyScale;
+  const kneeAsymmetry = Math.abs(leftKneeFlexion - rightKneeFlexion);
+  const landingSymmetry = clamp(100 - ankleHeightDifference * 75 - kneeAsymmetry * 1.15, 0, 100);
   const isContact =
     wristSpeed > 0.48 &&
     armAngularSpeed > 50 &&
@@ -295,6 +363,26 @@ export function analyzePose(
       isContact,
       handLocked: lockedSide !== null,
       trunkRotation,
+      balanceScore,
+      stanceWidth,
+      wristAcrossBody,
+      lateralReach,
+      leftKneeFlexion,
+      rightKneeFlexion,
+      leftAnkleSpeed,
+      rightAnkleSpeed,
+      footSpeed: Math.max(leftAnkleSpeed, rightAnkleSpeed),
+      centerSpeed,
+      verticalBounce: centerVerticalSpeed,
+      landingSymmetry,
+      ankleHeightDifference,
+      centerX: hipMidpoint.x,
+      centerY: hipMidpoint.y,
+      leftAnkleX: leftAnkle.x,
+      leftAnkleY: leftAnkle.y,
+      rightAnkleX: rightAnkle.x,
+      rightAnkleY: rightAnkle.y,
+      bodyScale,
     },
     memory: {
       timestamp,
@@ -312,6 +400,13 @@ export function analyzePose(
       rightActivity,
       activeFrames,
       bodyScale,
+      leftAnkle: { ...leftAnkle },
+      rightAnkle: { ...rightAnkle },
+      hipMidpoint: { ...hipMidpoint },
+      leftAnkleSpeed,
+      rightAnkleSpeed,
+      centerSpeed,
+      centerVerticalSpeed,
     },
   };
 }
@@ -332,4 +427,24 @@ export const initialMetrics: SmashMetrics = {
   isContact: false,
   handLocked: false,
   trunkRotation: 0,
+  balanceScore: 0,
+  stanceWidth: 0,
+  wristAcrossBody: 0,
+  lateralReach: 0,
+  leftKneeFlexion: 0,
+  rightKneeFlexion: 0,
+  leftAnkleSpeed: 0,
+  rightAnkleSpeed: 0,
+  footSpeed: 0,
+  centerSpeed: 0,
+  verticalBounce: 0,
+  landingSymmetry: 0,
+  ankleHeightDifference: 0,
+  centerX: 0,
+  centerY: 0,
+  leftAnkleX: 0,
+  leftAnkleY: 0,
+  rightAnkleX: 0,
+  rightAnkleY: 0,
+  bodyScale: 0,
 };

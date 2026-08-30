@@ -1,41 +1,42 @@
-export type AnalysisSource = "none" | "demo" | "live" | "history";
-export type AnalysisPlayer = "A" | "B";
-export type AnalysisCertainty = "likely" | "possible" | "unknown";
+import type {
+  MotionAssessment,
+  TrainingDrill,
+  TrainingModule,
+} from "./motion-technique";
+import type { PreferredHand } from "./pose-metrics";
 
-export type AnalysisStroke = {
+export type AnalysisSource = "none" | "demo" | "live" | "history";
+
+export type AnalysisMovement = MotionAssessment & {
   index: number;
-  hitter: AnalysisPlayer;
-  strokeType: "smash" | "drop_shot" | "clear" | "drive" | "overhead_control" | "unknown";
-  label: string;
-  evidence: number;
-  certainty: AnalysisCertainty;
-  swingIntensity: number;
-  postureScore: number;
-  reason: string;
-  family?: "overhead_attack" | "overhead_control" | "lateral" | "unknown";
-  position?: { x: number; y: number };
+  recordedAt: string;
 };
 
 export type AnalysisSummary = {
   headline: string;
   insight: string;
-  averageEvidence: number;
+  averageScore: number;
+  consistency: number;
+  strongestPhase: string;
+  priority: string;
 };
 
 export type AnalysisSnapshot = {
   source: AnalysisSource;
   capturedAt: string;
-  calibrated: boolean;
-  strokes: AnalysisStroke[];
-  movement: Record<AnalysisPlayer, number>;
+  trainingModule: TrainingModule;
+  drillMode: TrainingDrill;
+  preferredHand: PreferredHand;
+  movements: AnalysisMovement[];
   summary: AnalysisSummary | null;
 };
 
 export const EMPTY_ANALYSIS_SNAPSHOT: AnalysisSnapshot = {
   source: "none",
   capturedAt: "",
-  calibrated: false,
-  strokes: [],
-  movement: { A: 0, B: 0 },
+  trainingModule: "stroke",
+  drillMode: "open",
+  preferredHand: "auto",
+  movements: [],
   summary: null,
 };

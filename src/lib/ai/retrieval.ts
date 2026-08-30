@@ -20,6 +20,16 @@ const SYNONYMS: Record<string, string[]> = {
   phong: ["clear", "phongcau", "lob"],
   drive: ["tat", "tatcau", "phantat"],
   tat: ["drive", "tatcau", "phantat"],
+  backhand: ["traitay", "trai tay", "matngoai"],
+  traitay: ["backhand", "matngoai"],
+  hoivi: ["recovery", "thangbang"],
+  xoaythan: ["rotation", "thannguoi"],
+  bophap: ["footwork", "splitstep", "chasse", "lunge", "recovery"],
+  footwork: ["bophap", "splitstep", "chasse", "lunge", "recovery"],
+  splitstep: ["bophap", "footwork", "buoctach"],
+  chasse: ["bophap", "footwork", "buocduoi"],
+  lunge: ["bophap", "footwork", "buocchung"],
+  tiepdat: ["landing", "thangbang", "footwork"],
   tocdo: ["kmh", "speed", "van tốc"],
   kmh: ["tocdo", "speed"],
   quydao: ["duongcau", "diemroi", "tracking"],
@@ -64,16 +74,17 @@ function scoreChunk(chunk: KnowledgeChunk, queryTokens: string[], normalizedQuer
   }
 
   if (normalizedQuery.length > 7 && title.includes(normalizedQuery)) score += 8;
-  if (/kmh|toc do|quy dao|diem roi|cheo|thang/.test(normalizedQuery) && chunk.id === "pose-lite-unavailable-measurements") score += 12;
-  if (/accuracy|bang chung|tin cay|evidence/.test(normalizedQuery) && chunk.id === "pose-lite-evidence") score += 10;
+  if (/kmh|toc do|quy dao|diem roi|cheo|thang|tiep xuc/.test(normalizedQuery) && chunk.id === "motion-limitations") score += 12;
+  if (/accuracy|bang chung|tin cay|evidence|diem chuyen dong/.test(normalizedQuery) && chunk.id === "motion-evidence") score += 10;
+  if (/footwork|bo phap|split step|chasse|lunge|hoi vi|tiep dat/.test(normalizedQuery) && chunk.id === "bwf-footwork-components") score += 10;
   return score;
 }
 
 export function buildRetrievalQuery(question: string, snapshot: AnalysisSnapshot) {
-  const strokeContext = snapshot.strokes.slice(-12).map((stroke) =>
-    `${stroke.label} ${stroke.strokeType} ${stroke.certainty} ${stroke.reason}`,
+  const strokeContext = snapshot.movements.slice(-12).map((movement) =>
+    `${movement.module} ${movement.label} ${movement.technique} ${movement.summary} ${movement.corrections.join(" ")}`,
   ).join(" ");
-  return `${question} ${strokeContext}`.trim();
+  return `${question} ${snapshot.trainingModule} ${snapshot.drillMode} ${strokeContext}`.trim();
 }
 
 export function retrieveKnowledge(query: string, limit = 4): RetrievedKnowledge[] {

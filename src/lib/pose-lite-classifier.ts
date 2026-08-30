@@ -22,6 +22,26 @@ export type PoseLiteSample = {
   trunkRotation?: number;
   kneeFlexion?: number;
   handLocked?: boolean;
+  balanceScore?: number;
+  stanceWidth?: number;
+  wristAcrossBody?: number;
+  lateralReach?: number;
+  leftKneeFlexion?: number;
+  rightKneeFlexion?: number;
+  leftAnkleSpeed?: number;
+  rightAnkleSpeed?: number;
+  footSpeed?: number;
+  centerSpeed?: number;
+  verticalBounce?: number;
+  landingSymmetry?: number;
+  ankleHeightDifference?: number;
+  centerX?: number;
+  centerY?: number;
+  leftAnkleX?: number;
+  leftAnkleY?: number;
+  rightAnkleX?: number;
+  rightAnkleY?: number;
+  bodyScale?: number;
 };
 
 export type PoseLiteResult = {
@@ -99,6 +119,26 @@ export function resamplePoseWindow(samples: PoseLiteSample[], intervalMs = 40) {
       trunkRotation: interpolate(left.trunkRotation, right.trunkRotation, ratio),
       kneeFlexion: interpolate(left.kneeFlexion, right.kneeFlexion, ratio),
       handLocked: nearest.handLocked,
+      balanceScore: interpolate(left.balanceScore, right.balanceScore, ratio),
+      stanceWidth: interpolate(left.stanceWidth, right.stanceWidth, ratio),
+      wristAcrossBody: interpolate(left.wristAcrossBody, right.wristAcrossBody, ratio),
+      lateralReach: interpolate(left.lateralReach, right.lateralReach, ratio),
+      leftKneeFlexion: interpolate(left.leftKneeFlexion, right.leftKneeFlexion, ratio),
+      rightKneeFlexion: interpolate(left.rightKneeFlexion, right.rightKneeFlexion, ratio),
+      leftAnkleSpeed: interpolate(left.leftAnkleSpeed, right.leftAnkleSpeed, ratio),
+      rightAnkleSpeed: interpolate(left.rightAnkleSpeed, right.rightAnkleSpeed, ratio),
+      footSpeed: interpolate(left.footSpeed, right.footSpeed, ratio),
+      centerSpeed: interpolate(left.centerSpeed, right.centerSpeed, ratio),
+      verticalBounce: interpolate(left.verticalBounce, right.verticalBounce, ratio),
+      landingSymmetry: interpolate(left.landingSymmetry, right.landingSymmetry, ratio),
+      ankleHeightDifference: interpolate(left.ankleHeightDifference, right.ankleHeightDifference, ratio),
+      centerX: interpolate(left.centerX, right.centerX, ratio),
+      centerY: interpolate(left.centerY, right.centerY, ratio),
+      leftAnkleX: interpolate(left.leftAnkleX, right.leftAnkleX, ratio),
+      leftAnkleY: interpolate(left.leftAnkleY, right.leftAnkleY, ratio),
+      rightAnkleX: interpolate(left.rightAnkleX, right.rightAnkleX, ratio),
+      rightAnkleY: interpolate(left.rightAnkleY, right.rightAnkleY, ratio),
+      bodyScale: interpolate(left.bodyScale, right.bodyScale, ratio),
     });
   }
   return result.length >= 5 ? result : ordered;

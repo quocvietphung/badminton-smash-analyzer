@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import AnalysisChatbot from "@/components/analysis-chatbot";
-import RallyAnalyzer from "@/components/rally-analyzer";
+import MotionAnalyzer from "@/components/motion-analyzer";
 import type {
   CoachPromptRequest,
   StudioLanguage,
@@ -35,35 +35,35 @@ const COPY = {
   vi: {
     nav: { live: "Live", sessions: "Phiên tập", coach: "AI Coach", settings: "Cài đặt" },
     privacy: "Video luôn ở trên thiết bị",
-    eyebrow: "Huấn luyện cầu lông bằng AI trên thiết bị",
-    title: "Nhìn rõ chuyển động.",
-    titleAccent: "Tập luyện có mục tiêu.",
-    intro: "Mở camera, căn sân và nhận phản hồi Pose Lite theo thời gian thực. Không tải khung hình lên máy chủ.",
+    eyebrow: "Motion Capture cầu lông trên thiết bị",
+    title: "Hiểu từng chuyển động.",
+    titleAccent: "Hoàn thiện từng kỹ thuật.",
+    intro: "Mở camera, chọn kỹ thuật vợt hoặc bộ pháp và nhận phản hồi theo chuỗi chuyển động. Không tải video hoặc khung hình lên máy chủ.",
     heroPrimary: "Bắt đầu phiên Live",
     heroSecondary: "Xem dữ liệu mẫu",
     sessionsEyebrow: "Performance studio",
     sessionsTitle: "Báo cáo phiên tập",
-    sessionsCopy: "Xem lại từng động tác, xu hướng di chuyển và tiếp tục trao đổi với Coach.",
+    sessionsCopy: "Xem lại kỹ thuật vợt, chu kỳ bộ pháp, góc khớp, nhịp chuyển động và ưu tiên cần sửa của từng lần lặp.",
     coachEyebrow: "SmashLab intelligence",
     coachTitle: "Coach hiểu đúng phiên của bạn",
-    coachCopy: "Đặt câu hỏi dựa trên số liệu Pose Lite đang hiển thị và kho kiến thức có nguồn.",
+    coachCopy: "Đặt câu hỏi dựa trên số liệu Motion Capture đang hiển thị và kho kiến thức huấn luyện có nguồn.",
     settingsEyebrow: "Thiết bị & trải nghiệm",
     settingsTitle: "Cài đặt Studio",
     settingsCopy: "Tùy chỉnh giao diện và kiểm tra khả năng xử lý trực tiếp trên thiết bị.",
     appearance: "Giao diện",
-    appearanceCopy: "Chọn chế độ phù hợp với phòng tập hoặc sân ngoài trời.",
+    appearanceCopy: "Chọn chế độ phù hợp với phòng tập sáng hoặc tối.",
     dark: "Tối Studio",
-    light: "Sáng ngoài sân",
+    light: "Sáng phòng tập",
     language: "Ngôn ngữ",
     languageCopy: "Thay đổi ngôn ngữ điều khiển mà không ảnh hưởng dữ liệu phiên.",
     onboarding: "Hướng dẫn nhanh",
     onboardingCopy: "Xem lại ba bước để đặt điện thoại và bắt đầu phân tích.",
     replay: "Mở hướng dẫn",
-    footer: "Pose Lite chạy trên thiết bị · Azure AI chỉ nhận dữ liệu đã rút gọn",
+    footer: "Motion Capture chạy trên thiết bị · Azure AI chỉ nhận chỉ số chuyển động đã rút gọn",
     steps: [
-      { kicker: "01 · Đặt máy", title: "Nhìn trọn sân và hai vận động viên", body: "Đặt điện thoại cố định, quay ngang nếu có thể và tránh phản sáng từ màn hình hoặc đèn sân." },
-      { kicker: "02 · Căn sân", title: "Tự tìm vạch, sau đó kiểm tra bốn góc", body: "SmashLab đề xuất khung sân. Bạn vẫn có thể giữ và kéo từng điểm để đặt đúng giao điểm vạch." },
-      { kicker: "03 · Bắt đầu", title: "Giữ người chơi trong khung hình", body: "Kết thúc phiên để xem báo cáo, mở từng sự kiện và hỏi Coach bằng đúng dữ liệu vừa ghi." },
+      { kicker: "01 · Đặt máy", title: "Thấy trọn một người từ đầu đến chân", body: "Đặt điện thoại ngang hông, cách người tập 3–5 m, cố định máy và tránh ngược sáng." },
+      { kicker: "02 · Chọn bài", title: "Chọn kỹ thuật vợt hoặc bộ pháp", body: "Tập Smash, Backhand hoặc chuyển sang Footwork để chấm split step, chassé, lunge, bật nhảy và hồi vị." },
+      { kicker: "03 · Ghi set", title: "Thực hiện từng lần lặp có hồi vị", body: "Mỗi động tác nên có khởi động, tiếp cận, trụ hoặc vùng đánh rồi trở lại cân bằng trước lần tiếp theo." },
     ],
     skip: "Bỏ qua",
     back: "Quay lại",
@@ -73,35 +73,35 @@ const COPY = {
   en: {
     nav: { live: "Live", sessions: "Sessions", coach: "AI Coach", settings: "Settings" },
     privacy: "Video stays on your device",
-    eyebrow: "On-device AI badminton coaching",
-    title: "See every movement.",
-    titleAccent: "Train with purpose.",
-    intro: "Open the camera, calibrate the court and receive real-time Pose Lite feedback. Frames never leave your device.",
+    eyebrow: "On-device badminton Motion Capture",
+    title: "Understand every movement.",
+    titleAccent: "Refine every technique.",
+    intro: "Open the camera, choose racket technique or footwork and receive motion-sequence feedback. Video frames never leave your device.",
     heroPrimary: "Start live session",
     heroSecondary: "View sample data",
     sessionsEyebrow: "Performance studio",
     sessionsTitle: "Session reports",
-    sessionsCopy: "Review each movement, court coverage and continue the conversation with Coach.",
+    sessionsCopy: "Review racket technique, footwork cycles, joint angles, motion rhythm and priorities for every repetition.",
     coachEyebrow: "SmashLab intelligence",
     coachTitle: "A Coach grounded in your session",
-    coachCopy: "Ask questions using the current Pose Lite data and a cited badminton knowledge base.",
+    coachCopy: "Ask questions using the current Motion Capture data and a cited coaching knowledge base.",
     settingsEyebrow: "Device & experience",
     settingsTitle: "Studio settings",
     settingsCopy: "Tune the interface and inspect the on-device analysis capabilities.",
     appearance: "Appearance",
-    appearanceCopy: "Choose a mode for indoor training or bright outdoor courts.",
+    appearanceCopy: "Choose a mode for bright or dark training rooms.",
     dark: "Studio dark",
-    light: "Court light",
+    light: "Training light",
     language: "Language",
     languageCopy: "Change interface language without altering session data.",
     onboarding: "Quick guide",
     onboardingCopy: "Replay the three-step setup and analysis guide.",
     replay: "Open guide",
-    footer: "Pose Lite runs on device · Azure AI receives reduced analysis data only",
+    footer: "Motion Capture runs on device · Azure AI receives reduced motion metrics only",
     steps: [
-      { kicker: "01 · Position", title: "Frame the full court and both players", body: "Keep the phone stable, use landscape when possible and avoid glare from screens or court lights." },
-      { kicker: "02 · Calibrate", title: "Detect the court, then verify four corners", body: "SmashLab proposes a court frame. Hold and drag any point to align it with the real line intersection." },
-      { kicker: "03 · Analyze", title: "Keep both players inside the frame", body: "Finish the session to review events and ask Coach using the data you just captured." },
+      { kicker: "01 · Position", title: "Frame one athlete from head to toe", body: "Place the phone around hip height, 3–5 m away, keep it stable and avoid backlight." },
+      { kicker: "02 · Select", title: "Choose racket technique or footwork", body: "Train Smash or Backhand, or switch to Footwork for split step, chassé, lunge, jumps and recovery." },
+      { kicker: "03 · Record", title: "Perform complete repetitions", body: "Include start, approach, planting or hitting form and a balanced recovery before the next rep." },
     ],
     skip: "Skip",
     back: "Back",
@@ -223,7 +223,7 @@ export default function StudioShell() {
       <header className={styles.header}>
         <button type="button" className={styles.brand} onClick={() => navigate("live")} aria-label="SmashLab Live">
           <span className={styles.brandMark} aria-hidden="true">S</span>
-          <span className={styles.brandText}><strong>SmashLab</strong><span>COURT VISION STUDIO</span></span>
+          <span className={styles.brandText}><strong>SmashLab</strong><span>MOTION SCIENCE STUDIO</span></span>
         </button>
 
         <nav className={styles.desktopNav} aria-label={language === "vi" ? "Điều hướng chính" : "Main navigation"}>
@@ -307,7 +307,7 @@ export default function StudioShell() {
           </section>
         ) : null}
 
-        <RallyAnalyzer view={view} language={language} onNavigate={navigate} onAskCoach={askCoach} />
+        <MotionAnalyzer view={view} language={language} onNavigate={navigate} onAskCoach={askCoach} />
 
         <div className={view === "coach" ? styles.coachWorkspace : styles.floatingCoach}>
           <AnalysisChatbot

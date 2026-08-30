@@ -8,9 +8,9 @@ const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
 export const metadata: Metadata = {
   applicationName: "SmashLab",
-  title: "SmashLab — Court Vision Studio",
+  title: "SmashLab — Motion Science Studio",
   description:
-    "Phân tích tư thế và theo dõi di chuyển cầu lông trực tiếp trên thiết bị.",
+    "Phân tích kỹ thuật vợt và bộ pháp cầu lông bằng Motion Capture trực tiếp trên thiết bị.",
   manifest: "/manifest.webmanifest",
   icons: { icon: "/smashlab-icon.svg", apple: "/smashlab-icon.svg" },
   appleWebApp: {

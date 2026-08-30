@@ -1,8 +1,8 @@
-const DATABASE_NAME = "smashlab-pose-lite";
+const DATABASE_NAME = "smashlab-motion-lab";
 const DATABASE_VERSION = 1;
-const RALLY_STORE = "rallies";
+const SESSION_STORE = "motion-sessions";
 
-type StoredRally = {
+type StoredMotionSession = {
   id: string;
   createdAt: string;
 };
@@ -17,8 +17,8 @@ function openDatabase(): Promise<IDBDatabase> {
     const request = window.indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
     request.onupgradeneeded = () => {
       const database = request.result;
-      if (!database.objectStoreNames.contains(RALLY_STORE)) {
-        const store = database.createObjectStore(RALLY_STORE, { keyPath: "id" });
+      if (!database.objectStoreNames.contains(SESSION_STORE)) {
+        const store = database.createObjectStore(SESSION_STORE, { keyPath: "id" });
         store.createIndex("createdAt", "createdAt");
       }
     };
@@ -27,11 +27,11 @@ function openDatabase(): Promise<IDBDatabase> {
   });
 }
 
-export async function readRecentRallies<T extends StoredRally>(limit = 12): Promise<T[]> {
+export async function readRecentMotionSessions<T extends StoredMotionSession>(limit = 12): Promise<T[]> {
   const database = await openDatabase();
   return new Promise((resolve, reject) => {
-    const transaction = database.transaction(RALLY_STORE, "readonly");
-    const request = transaction.objectStore(RALLY_STORE).index("createdAt").openCursor(null, "prev");
+    const transaction = database.transaction(SESSION_STORE, "readonly");
+    const request = transaction.objectStore(SESSION_STORE).index("createdAt").openCursor(null, "prev");
     const results: T[] = [];
 
     request.onsuccess = () => {
@@ -40,57 +40,42 @@ export async function readRecentRallies<T extends StoredRally>(limit = 12): Prom
       results.push(cursor.value as T);
       cursor.continue();
     };
-    request.onerror = () => reject(request.error ?? new Error("Cannot read rally history"));
+    request.onerror = () => reject(request.error ?? new Error("Cannot read motion history"));
     transaction.oncomplete = () => {
       database.close();
       resolve(results);
     };
-    transaction.onerror = () => reject(transaction.error ?? new Error("Cannot read rally history"));
+    transaction.onerror = () => reject(transaction.error ?? new Error("Cannot read motion history"));
   });
 }
 
-export async function saveRally<T extends StoredRally>(item: T, limit = 12): Promise<T[]> {
+export async function saveMotionSession<T extends StoredMotionSession>(item: T, limit = 12): Promise<T[]> {
   const database = await openDatabase();
-
   await new Promise<void>((resolve, reject) => {
-    const transaction = database.transaction(RALLY_STORE, "readwrite");
-    transaction.objectStore(RALLY_STORE).put(item);
+    const transaction = database.transaction(SESSION_STORE, "readwrite");
+    transaction.objectStore(SESSION_STORE).put(item);
     transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error ?? new Error("Cannot save rally"));
+    transaction.onerror = () => reject(transaction.error ?? new Error("Cannot save motion session"));
   });
   database.close();
 
-  const recent = await readRecentRallies<T>(limit);
+  const recent = await readRecentMotionSessions<T>(limit);
   const keep = new Set(recent.map((entry) => entry.id));
   const cleanupDatabase = await openDatabase();
   await new Promise<void>((resolve, reject) => {
-    const transaction = cleanupDatabase.transaction(RALLY_STORE, "readwrite");
-    const store = transaction.objectStore(RALLY_STORE);
+    const transaction = cleanupDatabase.transaction(SESSION_STORE, "readwrite");
+    const store = transaction.objectStore(SESSION_STORE);
     const request = store.openCursor();
     request.onsuccess = () => {
       const cursor = request.result;
       if (!cursor) return;
-      const value = cursor.value as StoredRally;
+      const value = cursor.value as StoredMotionSession;
       if (!keep.has(value.id)) cursor.delete();
       cursor.continue();
     };
     transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error ?? new Error("Cannot clean rally history"));
+    transaction.onerror = () => reject(transaction.error ?? new Error("Cannot clean motion history"));
   });
   cleanupDatabase.close();
   return recent;
-}
-
-export async function migrateLegacyRallies<T extends StoredRally>(items: T[]): Promise<T[]> {
-  if (!items.length) return readRecentRallies<T>();
-  const database = await openDatabase();
-  await new Promise<void>((resolve, reject) => {
-    const transaction = database.transaction(RALLY_STORE, "readwrite");
-    const store = transaction.objectStore(RALLY_STORE);
-    items.forEach((item) => store.put(item));
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error ?? new Error("Cannot migrate rally history"));
-  });
-  database.close();
-  return readRecentRallies<T>();
 }

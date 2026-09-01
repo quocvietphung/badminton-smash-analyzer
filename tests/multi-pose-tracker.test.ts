@@ -93,6 +93,32 @@ test("uses shirt appearance to avoid an ID swap when athletes cross", () => {
   assert.equal(result.poses.find((entry) => entry.observedAppearance?.shirtColor === "blue")?.trackId, blueId);
 });
 
+test("keeps one athlete ID when screen color and pose fluctuate", () => {
+  const colors = [
+    appearance(0, "red"),
+    appearance(11, "blue"),
+    appearance(20, "white"),
+    appearance(19, "gray"),
+  ];
+  let result = updateMultiPoseTracker(
+    createMultiPoseTrackerState(),
+    [pose(0.5, 0.54, 1, colors[0])],
+    0,
+  );
+  const athleteId = result.poses[0].trackId;
+  for (let frame = 1; frame <= 60; frame += 1) {
+    const centerX = 0.5 + Math.sin(frame * 0.42) * 0.12;
+    const scale = 1 + Math.sin(frame * 0.31) * 0.055;
+    result = updateMultiPoseTracker(
+      result.state,
+      [pose(centerX, 0.54, scale, colors[frame % colors.length])],
+      frame * 40,
+    );
+    assert.equal(result.poses[0].trackId, athleteId);
+  }
+  assert.equal(result.state.nextId, 2);
+});
+
 test("does not reuse a stale identity after the tracking timeout", () => {
   let result = updateMultiPoseTracker(createMultiPoseTrackerState(), [pose(0.25)], 0);
   const firstId = result.poses[0].trackId;

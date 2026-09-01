@@ -74,3 +74,14 @@ test("auto mode abstains or returns a supported footwork label", () => {
   assert.ok(result.label.length > 0);
   assert.ok(result.evidence <= 82);
 });
+
+test("localizes footwork labels and coaching feedback", () => {
+  const english = assessFootworkWindow(footworkCycle("lunge"), "lunge", "right", "en");
+  const german = assessFootworkWindow(footworkCycle("jump"), "jump_landing", "right", "de");
+
+  assert.equal(english.label, "Lunge");
+  assert.match(english.summary, /motion quality/i);
+  assert.equal(german.label, "Sprung und Landung");
+  assert.match(german.summary, /Bewegungsqualität/);
+  assert.ok(german.corrections.every((item) => !/[à-ỹ]/i.test(item)));
+});

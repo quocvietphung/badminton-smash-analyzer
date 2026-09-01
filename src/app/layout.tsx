@@ -10,7 +10,7 @@ export const metadata: Metadata = {
   applicationName: "SmashLab",
   title: "SmashLab — Motion Science Studio",
   description:
-    "Phân tích kỹ thuật vợt và bộ pháp cầu lông bằng Motion Capture trực tiếp trên thiết bị.",
+    "On-device badminton racket-technique and footwork analysis powered by Motion Capture.",
   manifest: "/manifest.webmanifest",
   icons: { icon: "/smashlab-icon.svg", apple: "/smashlab-icon.svg" },
   appleWebApp: {
@@ -31,7 +31,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="vi" suppressHydrationWarning className={cn("dark font-sans", geist.variable)}>
+    <html lang="en" suppressHydrationWarning className={cn("dark font-sans", geist.variable)}>
       <body><TooltipProvider>{children}</TooltipProvider></body>
     </html>
   );

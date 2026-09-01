@@ -65,6 +65,7 @@ const CHAT_COPY = {
     disclaimer: "AI có thể sai. Motion Capture không nhìn thấy mặt vợt hoặc quả cầu và không thay thế huấn luyện viên.",
     copy: "Sao chép",
     clear: "Xóa cuộc trò chuyện",
+    open: "Mở SmashLab Coach",
     close: "Đóng chatbot",
   },
   en: {
@@ -79,7 +80,7 @@ const CHAT_COPY = {
     notCalibrated: "Auto",
     welcomeWithData: (count: number) => `I received **${count} Motion Capture repetitions** from the current set. I will ground recommendations in the cited knowledge base.`,
     welcomeEmpty: "Ask a technique question now, or open a camera session to receive personalized feedback.",
-    readSession: "Reads this session",
+    readSession: "Current session context",
     readSessionDetail: "Six phases, joint angles and rhythm",
     readFootworkDetail: "Four phases, foot rhythm and landing",
     verifiedRag: "Grounded retrieval",
@@ -93,7 +94,37 @@ const CHAT_COPY = {
     disclaimer: "AI can be wrong. Motion Capture cannot see the racket face or shuttle and does not replace a coach.",
     copy: "Copy",
     clear: "Clear conversation",
+    open: "Open SmashLab Coach",
     close: "Close chatbot",
+  },
+  de: {
+    sources: { none: "Keine Einheit", demo: "Beispieldaten", live: "Live-Aufnahme", history: "Gespeicherte Einheit" },
+    suggestions: ["Fasse dieses Techniktraining zusammen", "Welche Bewegungsphase braucht am meisten Arbeit?", "Erstelle einen 20-Minuten-Trainingsplan"],
+    footworkSuggestions: ["Fasse diese Beinarbeitseinheit zusammen", "Welche Beinarbeitsphase sollte ich zuerst verbessern?", "Erstelle ein 20-minütiges Schattenlauftraining"],
+    grounded: "Quellenbasiertes RAG",
+    events: "Wiederholungen",
+    evidence: "Durchschnittlicher Bewegungsscore",
+    court: "Übung",
+    calibrated: "Ausgewählt",
+    notCalibrated: "Automatisch",
+    welcomeWithData: (count: number) => `Ich habe **${count} Motion-Capture-Wiederholungen** aus der aktuellen Einheit erhalten. Empfehlungen werden mit der belegten Wissensbasis abgeglichen.`,
+    welcomeEmpty: "Stelle jetzt eine Technikfrage oder starte eine Live-Aufnahme für persönliches Feedback.",
+    readSession: "Analysiert diese Einheit",
+    readSessionDetail: "Sechs Phasen, Gelenkwinkel und Rhythmus",
+    readFootworkDetail: "Vier Phasen, Fußrhythmus und Landung",
+    verifiedRag: "Quellenbasierte Recherche",
+    verifiedRagDetail: "Nur relevante Quellen",
+    references: "Quellen",
+    thinking: "Einheitsdaten werden analysiert…",
+    error: "Azure AI ist nicht verfügbar. Bitte versuche es erneut.",
+    placeholderWithData: "Frage zu dieser Einheit…",
+    placeholderEmpty: "Frage den Coach zur Badminton-Technik…",
+    privacy: "Mit Quellen · kein Video-Upload",
+    disclaimer: "KI kann Fehler machen. Motion Capture erkennt weder Schlägerfläche noch Federball und ersetzt keinen Trainer.",
+    copy: "Kopieren",
+    clear: "Unterhaltung löschen",
+    open: "SmashLab Coach öffnen",
+    close: "Chatbot schließen",
   },
 } as const;
 
@@ -126,8 +157,11 @@ export default function AnalysisChatbot({
   const copy = CHAT_COPY[language];
   const visible = variant === "workspace" || open;
   const transport = useMemo(
-    () => new DefaultChatTransport({ api: "/api/ai/chat" }),
-    [],
+    () => new DefaultChatTransport({
+      api: "/api/ai/chat",
+      headers: { "X-SmashLab-Language": language },
+    }),
+    [language],
   );
   const {
     messages,
@@ -164,7 +198,7 @@ export default function AnalysisChatbot({
     if (!normalized || isGenerating) return;
     void sendMessage(
       { text: normalized },
-      { body: { analysis } },
+      { body: { analysis, language } },
     );
     setInput("");
   }
@@ -174,7 +208,7 @@ export default function AnalysisChatbot({
       {variant === "floating" ? <button
         type="button"
         className={styles.launcher}
-        aria-label={open ? "Đóng SmashLab Coach" : "Mở SmashLab Coach"}
+        aria-label={open ? copy.close : copy.open}
         aria-expanded={open}
         onClick={() => onOpenWorkspace ? onOpenWorkspace() : setOpen((current) => !current)}
       >
@@ -298,7 +332,7 @@ export default function AnalysisChatbot({
         </Conversation>
 
         <div className={styles.composerArea}>
-          <div className={styles.suggestions} aria-label="Câu hỏi gợi ý">
+          <div className={styles.suggestions} aria-label={language === "vi" ? "Câu hỏi gợi ý" : language === "de" ? "Vorgeschlagene Fragen" : "Suggested questions"}>
             {(analysis.trainingModule === "footwork" ? copy.footworkSuggestions : copy.suggestions).map((suggestion) => (
               <button
                 type="button"
@@ -320,7 +354,7 @@ export default function AnalysisChatbot({
               onChange={(event) => setInput(event.currentTarget.value)}
               disabled={isGenerating}
               placeholder={hasAnalysis ? copy.placeholderWithData : copy.placeholderEmpty}
-              aria-label="Câu hỏi cho SmashLab Coach"
+              aria-label={language === "vi" ? "Câu hỏi cho SmashLab Coach" : language === "de" ? "Frage an SmashLab Coach" : "Question for SmashLab Coach"}
               className={styles.promptTextarea}
             />
             <PromptInputFooter className={styles.promptFooter}>

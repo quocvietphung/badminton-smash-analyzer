@@ -4,6 +4,7 @@ import {
   type PoseLiteSample,
 } from "./pose-lite-classifier.ts";
 import type { DominantSide } from "./pose-metrics.ts";
+import type { StudioLanguage } from "./studio-types.ts";
 
 export type TechniqueMode =
   | "open"
@@ -93,15 +94,95 @@ export type MotionAssessment = {
   summary: string;
 };
 
-const LABELS: Record<MotionTechnique, string> = {
-  smash: "Smash",
-  backhand: "Backhand",
-  clear: "Clear / phông",
-  drop_shot: "Drop shot",
-  drive: "Drive / tạt",
-  overhead_control: "Cú đánh trên đầu có kiểm soát",
-  unknown: "Chuyển động chưa rõ",
+const LABELS: Record<StudioLanguage, Record<MotionTechnique, string>> = {
+  vi: {
+    smash: "Smash / đập cầu",
+    backhand: "Backhand / trái tay",
+    clear: "Clear / phông cầu",
+    drop_shot: "Drop shot / bỏ nhỏ",
+    drive: "Drive / tạt cầu",
+    overhead_control: "Cú đánh trên đầu có kiểm soát",
+    unknown: "Chuyển động chưa rõ",
+  },
+  en: {
+    smash: "Smash",
+    backhand: "Backhand",
+    clear: "Clear",
+    drop_shot: "Drop shot",
+    drive: "Drive",
+    overhead_control: "Controlled overhead stroke",
+    unknown: "Unclassified movement",
+  },
+  de: {
+    smash: "Smash",
+    backhand: "Rückhand",
+    clear: "Clear",
+    drop_shot: "Drop",
+    drive: "Drive",
+    overhead_control: "Kontrollierter Überkopfschlag",
+    unknown: "Nicht eindeutig klassifizierte Bewegung",
+  },
 };
+
+const FEEDBACK = {
+  vi: {
+    loadingStrength: "Pha kéo vợt có xoay thân và tạo tải rõ.",
+    accelerationStrength: "Nhịp tăng tốc tay rõ trước vùng tiếp xúc.",
+    contactStrength: "Tư thế vùng tiếp xúc phù hợp với bài tập đã chọn.",
+    recoveryStrength: "Giữ thăng bằng và giảm tốc tốt sau động tác.",
+    baselineStrength: "Đã ghi nhận đủ chuỗi chuyển động để bắt đầu so sánh các lần lặp.",
+    readyCorrection: "Ổn định tư thế sẵn sàng và giữ toàn thân trong khung hình.",
+    loadingCorrection: "Chuẩn bị sớm hơn: xoay thân và tạo tải chân trước khi tăng tốc tay.",
+    accelerationCorrection: "Tách rõ pha kéo vợt và pha tăng tốc, tránh vung đều từ đầu đến cuối.",
+    backhandCorrection: "Đưa khuỷu và mặt ngoài cẳng tay vào vị trí sớm hơn, giữ động tác gọn trước thân.",
+    driveCorrection: "Giữ động tác gọn, đưa vùng tiếp xúc ra trước thân và hạn chế biên độ thừa.",
+    overheadCorrection: "Vươn cao hơn và hoàn tất duỗi khuỷu ở vùng tiếp xúc.",
+    followCorrection: "Cho tay theo đà tự nhiên nhưng giữ trục thân ổn định.",
+    recoveryCorrection: "Kết thúc động tác bằng tư thế cân bằng để sẵn sàng cho lần tiếp theo.",
+    captureCorrection: "Cải thiện góc quay: đặt máy ngang hông, thấy trọn đầu–chân và tránh che tay vợt.",
+    unknownSummary: "Đã thấy chuyển động nhưng chưa đủ khác biệt để gán nhóm kỹ thuật.",
+    maintain: "Duy trì nhịp hiện tại.",
+    summary: (label: string, score: number, priority: string) => `${label}: ${score}/100 chất lượng chuyển động. Ưu tiên: ${priority}`,
+  },
+  en: {
+    loadingStrength: "The loading phase shows clear trunk rotation and lower-body loading.",
+    accelerationStrength: "The racket arm accelerates clearly before the contact zone.",
+    contactStrength: "Contact-zone posture matches the selected drill.",
+    recoveryStrength: "Balance and deceleration are well controlled after the stroke.",
+    baselineStrength: "The motion sequence is complete enough to compare repetitions.",
+    readyCorrection: "Stabilize the ready position and keep the full body in frame.",
+    loadingCorrection: "Prepare earlier: rotate the trunk and load the legs before accelerating the arm.",
+    accelerationCorrection: "Separate loading from acceleration more clearly; avoid swinging at one constant speed.",
+    backhandCorrection: "Position the elbow and outer forearm earlier, keeping the action compact and in front of the body.",
+    driveCorrection: "Keep the action compact, move the contact zone in front of the body and reduce unnecessary backswing.",
+    overheadCorrection: "Reach higher and complete elbow extension through the contact zone.",
+    followCorrection: "Allow a natural follow-through while keeping the trunk stable.",
+    recoveryCorrection: "Finish in a balanced position so you are ready for the next repetition.",
+    captureCorrection: "Improve the camera angle: place the phone at hip height, keep the athlete visible from head to toe and avoid occluding the racket arm.",
+    unknownSummary: "Movement was detected, but the pattern is not distinct enough to classify.",
+    maintain: "Maintain the current rhythm.",
+    summary: (label: string, score: number, priority: string) => `${label}: ${score}/100 motion quality. Priority: ${priority}`,
+  },
+  de: {
+    loadingStrength: "In der Ausholphase sind Rumpfrotation und Belastungsaufbau klar erkennbar.",
+    accelerationStrength: "Der Schlagarm beschleunigt deutlich vor der Treffzone.",
+    contactStrength: "Die Körperposition in der Treffzone passt zur gewählten Übung.",
+    recoveryStrength: "Gleichgewicht und Abbremsen sind nach dem Schlag gut kontrolliert.",
+    baselineStrength: "Der Bewegungsablauf ist vollständig genug, um Wiederholungen zu vergleichen.",
+    readyCorrection: "Stabilisiere die Bereitschaftsposition und bleibe vollständig im Bild.",
+    loadingCorrection: "Bereite früher vor: Rotiere den Rumpf und belaste die Beine, bevor der Schlagarm beschleunigt.",
+    accelerationCorrection: "Trenne Aushol- und Beschleunigungsphase deutlicher; vermeide eine gleichförmige Schlagbewegung.",
+    backhandCorrection: "Bringe Ellbogen und Außenseite des Unterarms früher in Position und halte die Bewegung kompakt vor dem Körper.",
+    driveCorrection: "Halte die Bewegung kompakt, verlagere die Treffzone vor den Körper und reduziere unnötiges Ausholen.",
+    overheadCorrection: "Strecke dich höher und führe die Ellbogenstreckung durch die Treffzone zu Ende.",
+    followCorrection: "Lass den Schlag natürlich ausschwingen und halte dabei den Rumpf stabil.",
+    recoveryCorrection: "Beende die Bewegung ausbalanciert, damit du für die nächste Wiederholung bereit bist.",
+    captureCorrection: "Verbessere den Kamerawinkel: Smartphone auf Hüfthöhe, Person vollständig von Kopf bis Fuß im Bild und Schlagarm frei sichtbar.",
+    unknownSummary: "Eine Bewegung wurde erkannt, das Muster ist jedoch nicht eindeutig genug für eine Klassifizierung.",
+    maintain: "Behalte den aktuellen Rhythmus bei.",
+    summary: (label: string, score: number, priority: string) => `${label}: ${score}/100 Bewegungsqualität. Priorität: ${priority}`,
+  },
+} as const;
 
 const clamp = (value: number, min = 0, max = 1) =>
   Math.min(max, Math.max(min, value));
@@ -131,6 +212,52 @@ function phaseScore(phase: MotionPhase, rawScore: number): MotionPhaseScore {
 function inferTechnique(samples: PoseLiteSample[]): MotionTechnique {
   const result = classifyPoseWindow(samples, { drillMode: "open" });
   return result.strokeType;
+}
+
+export function localizeMotionAssessment(
+  assessment: MotionAssessment,
+  language: StudioLanguage,
+): MotionAssessment {
+  if (assessment.module !== "stroke") return assessment;
+  const copy = FEEDBACK[language];
+  const scoreFor = (phase: MotionPhase) => assessment.phases.find((entry) => entry.phase === phase)?.score ?? 0;
+  const loading = scoreFor("loading");
+  const acceleration = scoreFor("acceleration");
+  const contact = scoreFor("contact_zone");
+  const follow = scoreFor("follow_through");
+  const recovery = scoreFor("recovery");
+  const ready = scoreFor("ready");
+  const technique = assessment.technique as MotionTechnique;
+  const label = LABELS[language][technique];
+  const strengths: string[] = [];
+  const corrections: string[] = [];
+
+  if (loading >= 72) strengths.push(copy.loadingStrength);
+  if (acceleration >= 72) strengths.push(copy.accelerationStrength);
+  if (contact >= 72) strengths.push(copy.contactStrength);
+  if (recovery >= 72) strengths.push(copy.recoveryStrength);
+  if (!strengths.length) strengths.push(copy.baselineStrength);
+  if (ready < 58) corrections.push(copy.readyCorrection);
+  if (loading < 60) corrections.push(copy.loadingCorrection);
+  if (acceleration < 60) corrections.push(copy.accelerationCorrection);
+  if (contact < 60) corrections.push(technique === "backhand"
+    ? copy.backhandCorrection
+    : technique === "drive"
+      ? copy.driveCorrection
+      : copy.overheadCorrection);
+  if (follow < 58) corrections.push(copy.followCorrection);
+  if (recovery < 62) corrections.push(copy.recoveryCorrection);
+  if (assessment.captureQuality < 62) corrections.unshift(copy.captureCorrection);
+
+  return {
+    ...assessment,
+    label,
+    strengths: strengths.slice(0, 3),
+    corrections: corrections.slice(0, 4),
+    summary: technique === "unknown"
+      ? copy.unknownSummary
+      : copy.summary(label, assessment.overallScore, corrections[0] ?? copy.maintain),
+  };
 }
 
 function techniqueContactScore(technique: MotionTechnique, values: {
@@ -173,10 +300,10 @@ export function assessMotionWindow(
   rawSamples: PoseLiteSample[],
   mode: TechniqueMode,
   dominantSide: DominantSide,
+  language: StudioLanguage = "vi",
 ): MotionAssessment {
   const samples = resamplePoseWindow(rawSamples, 40);
   const technique = mode === "open" ? inferTechnique(samples) : mode;
-  const label = LABELS[technique];
   const durationMs = samples.length > 1
     ? Math.max(0, samples.at(-1)!.timestamp - samples[0].timestamp)
     : 0;
@@ -261,36 +388,10 @@ export function assessMotionWindow(
   const evidence = Math.min(82, Math.round(captureQuality * 0.53
     + temporalShape * 100 * 0.31 + clamp(samples.length / 16) * 100 * 0.16));
 
-  const strengths: string[] = [];
-  const corrections: string[] = [];
-  if (loading.score >= 72) strengths.push("Pha kéo vợt có xoay thân và tạo tải rõ.");
-  if (acceleration.score >= 72) strengths.push("Nhịp tăng tốc tay rõ trước vùng tiếp xúc.");
-  if (contact.score >= 72) strengths.push("Tư thế vùng tiếp xúc phù hợp với bài tập đã chọn.");
-  if (recovery.score >= 72) strengths.push("Giữ thăng bằng và giảm tốc tốt sau động tác.");
-  if (!strengths.length) strengths.push("Đã ghi nhận đủ chuỗi chuyển động để bắt đầu so sánh các lần lặp.");
-
-  if (ready.score < 58) corrections.push("Ổn định tư thế sẵn sàng và giữ toàn thân trong khung hình.");
-  if (loading.score < 60) corrections.push("Chuẩn bị sớm hơn: xoay thân và tạo tải chân trước khi tăng tốc tay.");
-  if (acceleration.score < 60) corrections.push("Tách rõ pha kéo vợt và pha tăng tốc, tránh vung đều từ đầu đến cuối.");
-  if (contact.score < 60) {
-    corrections.push(technique === "backhand"
-      ? "Đưa khuỷu và mặt ngoài cẳng tay vào vị trí sớm hơn, giữ động tác gọn trước thân."
-      : technique === "drive"
-        ? "Giữ động tác gọn, tiếp xúc trước thân và hạn chế biên độ thừa."
-        : "Vươn cao hơn và hoàn tất duỗi khuỷu ở vùng tiếp xúc.");
-  }
-  if (follow.score < 58) corrections.push("Cho tay theo đà tự nhiên nhưng giữ trục thân ổn định.");
-  if (recovery.score < 62) corrections.push("Kết thúc động tác bằng tư thế cân bằng để sẵn sàng cho lần tiếp theo.");
-  if (captureQuality < 62) corrections.unshift("Cải thiện góc quay: đặt máy ngang hông, thấy trọn đầu–chân và tránh che tay vợt.");
-
-  const summary = technique === "unknown"
-    ? "Đã thấy chuyển động nhưng chưa đủ khác biệt để gán nhóm kỹ thuật."
-    : `${label}: ${overallScore}/100 chất lượng chuyển động, ưu tiên ${corrections[0]?.toLowerCase() ?? "duy trì nhịp hiện tại"}`;
-
-  return {
+  return localizeMotionAssessment({
     module: "stroke",
     technique,
-    label,
+    label: "",
     evidence,
     overallScore,
     postureScore,
@@ -312,8 +413,8 @@ export function assessMotionWindow(
       armAngularSpeed: Math.round(peakAngular),
       balance: Math.round(averageBalance),
     },
-    strengths: strengths.slice(0, 3),
-    corrections: corrections.slice(0, 4),
-    summary,
-  };
+    strengths: [],
+    corrections: [],
+    summary: "",
+  }, language);
 }

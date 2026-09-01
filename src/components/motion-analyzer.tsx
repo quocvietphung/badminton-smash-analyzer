@@ -5,7 +5,9 @@ import {
   Activity,
   Armchair,
   Camera,
+  CameraOff,
   Check,
+  ChevronDown,
   ChevronRight,
   CircleDashed,
   Dumbbell,
@@ -16,14 +18,14 @@ import {
   Maximize2,
   MessageCircleMore,
   Minimize2,
-  Pause,
-  Play,
   RotateCcw,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Target,
   TrendingUp,
   UserRoundCheck,
+  X,
   Zap,
 } from "lucide-react";
 import {
@@ -35,8 +37,10 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   assessMotionWindow,
+  localizeMotionAssessment,
   type FootworkMode,
   type MotionAssessment,
   type MotionPhase,
@@ -46,6 +50,7 @@ import {
 import {
   assessFootworkWindow,
   FOOTWORK_CATALOG,
+  localizeFootworkAssessment,
 } from "@/lib/footwork-analysis";
 import {
   analyzePose,
@@ -63,8 +68,7 @@ import {
   type TrackedPose,
 } from "@/lib/multi-pose-tracker";
 import {
-  appearanceDistance,
-  blendAppearance,
+  appearanceIdentityConflict,
   extractTorsoAppearance,
   horizontalPosition,
   shirtColorCss,
@@ -100,6 +104,16 @@ type AthleteOption = {
   shirtColor: ShirtColor;
   position: HorizontalPosition;
 };
+type AthleteColorMemory = {
+  displayed: ShirtColor;
+  candidate: ShirtColor;
+  candidateFrames: number;
+};
+type FocusReticle = {
+  x: number;
+  y: number;
+  token: number;
+};
 type MotionSession = {
   id: string;
   createdAt: string;
@@ -110,57 +124,63 @@ type MotionSession = {
   summary: AnalysisSummary;
 };
 
+type SessionDropdownOption<T extends string> = {
+  value: T;
+  label: string;
+  group?: string;
+};
+
 const HISTORY_FALLBACK_KEY = "smashlab-motion-history-v1";
 const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm";
 const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
 const APPEARANCE_WIDTH = 320;
 const APPEARANCE_HEIGHT = 180;
 
-const TECHNIQUES: Array<{ value: TechniqueMode; label: string; short: string }> = [
-  { value: "open", label: "Tự nhận nhóm động tác", short: "AUTO" },
-  { value: "smash", label: "Smash", short: "SM" },
-  { value: "backhand", label: "Backhand", short: "BH" },
-  { value: "clear", label: "Clear / phông", short: "CL" },
-  { value: "drop_shot", label: "Drop shot", short: "DR" },
-  { value: "drive", label: "Drive / tạt", short: "DV" },
+const TECHNIQUES: Array<{ value: TechniqueMode; labelEn: string; labelDe: string; labelVi: string; short: string }> = [
+  { value: "open", labelEn: "Auto detect motion group", labelDe: "Bewegungsgruppe automatisch erkennen", labelVi: "Tự nhận nhóm động tác", short: "AUTO" },
+  { value: "smash", labelEn: "Smash", labelDe: "Smash", labelVi: "Smash", short: "SM" },
+  { value: "backhand", labelEn: "Backhand", labelDe: "Rückhand", labelVi: "Backhand", short: "BH" },
+  { value: "clear", labelEn: "Clear", labelDe: "Clear", labelVi: "Clear / phông", short: "CL" },
+  { value: "drop_shot", labelEn: "Drop shot", labelDe: "Drop", labelVi: "Drop shot", short: "DR" },
+  { value: "drive", labelEn: "Drive", labelDe: "Drive", labelVi: "Drive / tạt", short: "DV" },
 ];
 
 const FOOTWORK_GROUP_LABELS = {
-  foundation: { vi: "Nền tảng BWF", en: "BWF foundations" },
-  court_pattern: { vi: "Mẫu di chuyển", en: "Movement patterns" },
-  advanced: { vi: "Bật nhảy nâng cao", en: "Advanced jumps" },
+  foundation: { vi: "Nền tảng BWF", en: "BWF foundations", de: "BWF-Grundlagen" },
+  court_pattern: { vi: "Mẫu di chuyển", en: "Movement patterns", de: "Bewegungsmuster" },
+  advanced: { vi: "Bật nhảy nâng cao", en: "Advanced jumps", de: "Fortgeschrittene Sprünge" },
 } as const;
 
-const SHIRT_COLOR_LABELS: Record<ShirtColor, { vi: string; en: string }> = {
-  red: { vi: "áo đỏ", en: "red shirt" },
-  orange: { vi: "áo cam", en: "orange shirt" },
-  yellow: { vi: "áo vàng", en: "yellow shirt" },
-  green: { vi: "áo xanh lá", en: "green shirt" },
-  blue: { vi: "áo xanh dương", en: "blue shirt" },
-  purple: { vi: "áo tím", en: "purple shirt" },
-  pink: { vi: "áo hồng", en: "pink shirt" },
-  white: { vi: "áo trắng", en: "white shirt" },
-  gray: { vi: "áo xám", en: "gray shirt" },
-  black: { vi: "áo đen", en: "black shirt" },
-  unknown: { vi: "màu áo chưa rõ", en: "shirt color unclear" },
+const SHIRT_COLOR_LABELS: Record<ShirtColor, Record<StudioLanguage, string>> = {
+  red: { vi: "áo đỏ", en: "red shirt", de: "rotes Trikot" },
+  orange: { vi: "áo cam", en: "orange shirt", de: "oranges Trikot" },
+  yellow: { vi: "áo vàng", en: "yellow shirt", de: "gelbes Trikot" },
+  green: { vi: "áo xanh lá", en: "green shirt", de: "grünes Trikot" },
+  blue: { vi: "áo xanh dương", en: "blue shirt", de: "blaues Trikot" },
+  purple: { vi: "áo tím", en: "purple shirt", de: "violettes Trikot" },
+  pink: { vi: "áo hồng", en: "pink shirt", de: "rosa Trikot" },
+  white: { vi: "áo trắng", en: "white shirt", de: "weißes Trikot" },
+  gray: { vi: "áo xám", en: "gray shirt", de: "graues Trikot" },
+  black: { vi: "áo đen", en: "black shirt", de: "schwarzes Trikot" },
+  unknown: { vi: "màu áo chưa rõ", en: "shirt color unclear", de: "Trikotfarbe unklar" },
 };
 
-const POSITION_LABELS: Record<HorizontalPosition, { vi: string; en: string }> = {
-  left: { vi: "bên trái", en: "left" },
-  center: { vi: "ở giữa", en: "center" },
-  right: { vi: "bên phải", en: "right" },
+const POSITION_LABELS: Record<HorizontalPosition, Record<StudioLanguage, string>> = {
+  left: { vi: "bên trái", en: "left", de: "links" },
+  center: { vi: "ở giữa", en: "center", de: "mittig" },
+  right: { vi: "bên phải", en: "right", de: "rechts" },
 };
 
-const PHASE_COPY: Record<MotionPhase, { vi: string; en: string }> = {
-  ready: { vi: "Sẵn sàng", en: "Ready" },
-  loading: { vi: "Kéo vợt", en: "Loading" },
-  acceleration: { vi: "Tăng tốc", en: "Acceleration" },
-  contact_zone: { vi: "Vùng tiếp xúc", en: "Contact zone" },
-  follow_through: { vi: "Theo đà", en: "Follow-through" },
-  start: { vi: "Khởi động", en: "Start" },
-  approach: { vi: "Tiếp cận", en: "Approach" },
-  hit_balance: { vi: "Trụ & cân bằng", en: "Plant & balance" },
-  recovery: { vi: "Hồi vị", en: "Recovery" },
+const PHASE_COPY: Record<MotionPhase, Record<StudioLanguage, string>> = {
+  ready: { vi: "Sẵn sàng", en: "Ready", de: "Bereit" },
+  loading: { vi: "Kéo vợt", en: "Loading", de: "Ausholen" },
+  acceleration: { vi: "Tăng tốc", en: "Acceleration", de: "Beschleunigung" },
+  contact_zone: { vi: "Vùng tiếp xúc", en: "Contact zone", de: "Treffzone" },
+  follow_through: { vi: "Theo đà", en: "Follow-through", de: "Ausschwung" },
+  start: { vi: "Khởi động", en: "Start", de: "Start" },
+  approach: { vi: "Tiếp cận", en: "Approach", de: "Annäherung" },
+  hit_balance: { vi: "Trụ & cân bằng", en: "Plant & balance", de: "Stand & Balance" },
+  recovery: { vi: "Hồi vị", en: "Recovery", de: "Rückkehr" },
 };
 
 const UI = {
@@ -178,8 +198,15 @@ const UI = {
     athleteMissing: "Chưa chọn mục tiêu",
     targetLabel: "Mục tiêu phân tích",
     targetSelect: "Bạn muốn khóa VĐV nào?",
-    targetGuide: "Chọn theo màu áo và vị trí, hoặc chạm trực tiếp vào người.",
-    targetLocked: "Đã khóa VĐV",
+    targetGuide: "Chạm trực tiếp vào người như lấy nét camera, hoặc chọn theo màu áo và vị trí.",
+    changeTarget: "Đổi người",
+    collapseTarget: "Thu gọn",
+    confirmTargetTitle: "Xác nhận VĐV cần phân tích",
+    confirmTargetCopy: "Sau khi xác nhận, hệ thống chỉ chấm người này và không tự chuyển sang người khác. Muốn chọn lại, hãy bấm “Đổi người”.",
+    confirmTarget: "Khóa cứng VĐV",
+    chooseAgain: "Chọn lại",
+    targetUnavailable: "VĐV vừa chọn không còn trong khung. Hãy chạm chọn lại.",
+    targetLocked: "Khóa cứng VĐV",
     targetLost: "Đang mất dấu mục tiêu · hệ thống đã tạm dừng chấm",
     targetRequired: "Hãy chọn VĐV cần phân tích trước khi ghi set",
     detectedPeople: "người trong khung",
@@ -187,6 +214,10 @@ const UI = {
     engineReady: "Sẵn sàng",
     storage: "Lịch sử",
     setup: "Thiết lập bài tập",
+    sessionSetup: "Thiết lập phiên",
+    sessionSetupCopy: "Chọn mô-đun, bài tập và tay thuận trước khi mở camera.",
+    sessionSummary: "Chạm để thay đổi bài tập và kiểm tra hệ thống",
+    closeSessionSetup: "Đóng thiết lập phiên",
     moduleLabel: "Mô-đun phân tích",
     strokeModule: "Kỹ thuật vợt",
     footworkModule: "Bộ pháp",
@@ -200,6 +231,9 @@ const UI = {
     openCamera: "Mở camera",
     opening: "Đang khởi động…",
     stopCamera: "Tắt camera",
+    cameraSettings: "Thiết lập trong camera",
+    options: "Tùy chọn",
+    closeSettings: "Đóng thiết lập",
     startSet: "Bắt đầu ghi set",
     stopSet: "Kết thúc set",
     newSet: "Set mới",
@@ -207,7 +241,7 @@ const UI = {
     focus: "Toàn màn hình",
     exitFocus: "Thoát toàn màn hình",
     cameraTitle: "Đặt camera thấy trọn VĐV cần phân tích",
-    cameraCopy: "Có thể có tối đa 4 người trong khung. Sau khi mở camera, chọn option theo màu áo/vị trí hoặc chạm vào đúng VĐV.",
+    cameraCopy: "Có thể có tối đa 4 người trong khung. Chọn theo màu áo/vị trí hoặc chạm đúng VĐV, rồi xác nhận trước khi khóa.",
     footworkCameraCopy: "Đặt máy ngang hông, thấy rõ hai bàn chân và chừa đủ khoảng trống cho toàn bộ hướng di chuyển.",
     liveWaiting: "Đang chờ một nhịp vung rõ",
     footworkWaiting: "Đang chờ một chu kỳ chân rõ",
@@ -227,8 +261,8 @@ const UI = {
     knee: "Gập gối",
     extension: "Độ duỗi cơ thể",
     balance: "Thăng bằng",
-    footSpeed: "Tốc độ chân",
-    centerSpeed: "Tốc độ trọng tâm",
+    footSpeed: "Tốc độ chân tương đối",
+    centerSpeed: "Chuyển động trọng tâm tương đối",
     stance: "Độ rộng trụ",
     landing: "Cân bằng tiếp đất",
     footworkCatalog: "Danh mục bộ pháp",
@@ -267,8 +301,15 @@ const UI = {
     athleteMissing: "No target selected",
     targetLabel: "Analysis target",
     targetSelect: "Which athlete do you want to lock?",
-    targetGuide: "Choose by shirt color and position, or tap the athlete directly.",
-    targetLocked: "Locked on athlete",
+    targetGuide: "Tap an athlete like camera focus, or choose by shirt color and position.",
+    changeTarget: "Change athlete",
+    collapseTarget: "Collapse",
+    confirmTargetTitle: "Confirm analysis target",
+    confirmTargetCopy: "After confirmation, scoring stays on this athlete and never switches automatically. Use “Change athlete” to select again.",
+    confirmTarget: "Hard-lock athlete",
+    chooseAgain: "Choose again",
+    targetUnavailable: "The selected athlete is no longer visible. Please tap again.",
+    targetLocked: "Hard-locked athlete",
     targetLost: "Target temporarily lost · scoring is paused",
     targetRequired: "Select the athlete to analyze before recording",
     detectedPeople: "people in frame",
@@ -276,6 +317,10 @@ const UI = {
     engineReady: "Ready",
     storage: "History",
     setup: "Drill setup",
+    sessionSetup: "Session setup",
+    sessionSetupCopy: "Choose the module, drill and dominant hand before opening the camera.",
+    sessionSummary: "Tap to change the drill and check the system",
+    closeSessionSetup: "Close session setup",
     moduleLabel: "Analysis module",
     strokeModule: "Racket technique",
     footworkModule: "Footwork",
@@ -289,19 +334,22 @@ const UI = {
     openCamera: "Open camera",
     opening: "Starting…",
     stopCamera: "Stop camera",
-    startSet: "Start set",
-    stopSet: "Finish set",
-    newSet: "New set",
+    cameraSettings: "In-camera setup",
+    options: "Options",
+    closeSettings: "Close setup",
+    startSet: "Start recording",
+    stopSet: "Finish recording",
+    newSet: "New recording",
     demo: "View sample data",
     focus: "Full screen",
     exitFocus: "Exit full screen",
     cameraTitle: "Frame the athlete you want to analyze",
-    cameraCopy: "Up to four people may be visible. Open the camera, then choose by shirt color/position or tap the athlete directly.",
+    cameraCopy: "Up to four people may be visible. Choose by shirt color/position or tap the athlete, then confirm before locking.",
     footworkCameraCopy: "Place the camera at hip height, keep both feet visible and leave room for the complete movement path.",
     liveWaiting: "Waiting for a distinct swing",
     footworkWaiting: "Waiting for a distinct footwork cycle",
-    notRecording: "Camera ready · press Start set",
-    recording: "RECORDING SET",
+    notRecording: "Camera ready · tap Start recording",
+    recording: "RECORDING",
     demoNotice: "SAMPLE DATA · Interface preview only, not captured from camera.",
     privacy: "Video and body landmarks stay on device",
     reps: "Repetitions",
@@ -316,17 +364,17 @@ const UI = {
     knee: "Knee flexion",
     extension: "Body extension",
     balance: "Balance",
-    footSpeed: "Foot speed",
-    centerSpeed: "Center speed",
+    footSpeed: "Relative foot speed",
+    centerSpeed: "Relative center movement",
     stance: "Stance width",
     landing: "Landing balance",
     footworkCatalog: "Footwork catalogue",
     catalogCopy: "Components and movement patterns follow the BWF Start → Approach → Hit → Recovery cycle.",
     latest: "Latest repetition",
-    noReps: "No repetition yet. Start a set, then perform a distinct preparation, swing and recovery.",
-    noFootworkReps: "No footwork cycle yet. Start a set, perform the drill, then recover before the next repetition.",
+    noReps: "No repetition yet. Start recording, then perform a distinct preparation, swing and recovery.",
+    noFootworkReps: "No footwork cycle yet. Start recording, perform the drill, then recover before the next repetition.",
     reportTitle: "Motion Capture report",
-    reportEmpty: "No technique set to report",
+    reportEmpty: "No recorded technique session",
     reportEmptyCopy: "Record a real set or load sample data to preview the report structure.",
     backLive: "Back to training",
     askCoach: "Ask AI Coach",
@@ -336,13 +384,210 @@ const UI = {
     corrections: "Improvement priorities",
     repetitions: "Repetition log",
     recent: "Recent on-device sessions",
-    noHistory: "No set has been saved on this device.",
+    noHistory: "No session has been saved on this device.",
     diagnostics: "Motion Capture system",
     diagnosticsCopy: "MediaPipe runs in a Web Worker when supported. Video is never uploaded to Vercel or Azure.",
     limitation: "Motion Capture scores body movement form. It cannot see the racket face or shuttle, so it does not confirm contact quality, trajectory or km/h.",
     footworkLimitation: "Footwork is scored from hip, knee and ankle landmarks over time. The system does not know real court position, shuttle reaction or metric distance without spatial calibration.",
   },
+  de: {
+    module: "MOTION CAPTURE · AUF DEM GERÄT",
+    title: "Persönliches Techniklabor",
+    description: "Wähle eine Übung, erfasse den ganzen Körper und führe jede Wiederholung einzeln aus. SmashLab bewertet Gelenkfolge, Schlagrhythmus und Rückkehr.",
+    footworkTitle: "Persönliches Beinarbeitslabor",
+    footworkDescription: "Analysiere Split Step, Annäherung, Stützphase, Landung und Rückkehr anhand der Hüft-Knie-Sprunggelenk-Kette.",
+    camera: "Kamera",
+    cameraOff: "Nicht gestartet",
+    cameraOn: "Aktiv",
+    athlete: "Athlet",
+    athleteReady: "Ziel fixiert",
+    athleteMissing: "Kein Ziel ausgewählt",
+    targetLabel: "Analyseziel",
+    targetSelect: "Welchen Athleten möchtest du fixieren?",
+    targetGuide: "Tippe wie beim Kamerafokus auf eine Person oder wähle nach Trikotfarbe und Position.",
+    changeTarget: "Person wechseln",
+    collapseTarget: "Einklappen",
+    confirmTargetTitle: "Analyseziel bestätigen",
+    confirmTargetCopy: "Nach der Bestätigung bleibt die Bewertung auf dieser Person und wechselt nicht automatisch. Nutze „Person wechseln“, um neu auszuwählen.",
+    confirmTarget: "Athleten fest fixieren",
+    chooseAgain: "Neu wählen",
+    targetUnavailable: "Der ausgewählte Athlet ist nicht mehr sichtbar. Bitte erneut antippen.",
+    targetLocked: "Athlet fest fixiert",
+    targetLost: "Ziel kurzzeitig verloren · Bewertung pausiert",
+    targetRequired: "Wähle vor der Aufnahme den zu analysierenden Athleten",
+    detectedPeople: "Personen im Bild",
+    engine: "Motion Engine",
+    engineReady: "Bereit",
+    storage: "Verlauf",
+    setup: "Übung einrichten",
+    sessionSetup: "Aufzeichnung einrichten",
+    sessionSetupCopy: "Wähle Modul, Übung und dominante Hand, bevor du die Kamera öffnest.",
+    sessionSummary: "Tippen, um Übung und Systemstatus zu ändern",
+    closeSessionSetup: "Aufzeichnungseinstellungen schließen",
+    moduleLabel: "Analysemodul",
+    strokeModule: "Schlagtechnik",
+    footworkModule: "Beinarbeit",
+    technique: "Technikübung",
+    footwork: "Beinarbeitsübung",
+    hand: "Schlägerhand",
+    dominantSide: "Dominante / Schlägerseite",
+    autoHand: "Automatisch erkennen und fixieren",
+    right: "Rechte Hand",
+    left: "Linke Hand",
+    openCamera: "Kamera öffnen",
+    opening: "Wird gestartet…",
+    stopCamera: "Kamera ausschalten",
+    cameraSettings: "Kamera-Einstellungen",
+    options: "Optionen",
+    closeSettings: "Einstellungen schließen",
+    startSet: "Aufzeichnung starten",
+    stopSet: "Aufzeichnung beenden",
+    newSet: "Neue Aufzeichnung",
+    demo: "Beispieldaten ansehen",
+    focus: "Vollbild",
+    exitFocus: "Vollbild beenden",
+    cameraTitle: "Erfasse den zu analysierenden Athleten vollständig",
+    cameraCopy: "Bis zu vier Personen können sichtbar sein. Wähle nach Trikotfarbe/Position oder tippe auf den Athleten und bestätige danach die Fixierung.",
+    footworkCameraCopy: "Platziere die Kamera auf Hüfthöhe, halte beide Füße sichtbar und lasse Platz für den gesamten Bewegungsweg.",
+    liveWaiting: "Warte auf eine klare Schlagbewegung",
+    footworkWaiting: "Warte auf einen klaren Beinarbeitszyklus",
+    notRecording: "Kamera bereit · Aufzeichnung starten",
+    recording: "AUFZEICHNUNG LÄUFT",
+    demoNotice: "BEISPIELDATEN · Nur zur Vorschau des Berichts, nicht von der Kamera aufgenommen.",
+    privacy: "Video und Körperlandmarken bleiben auf dem Gerät",
+    reps: "Wiederholungen",
+    score: "Bewegungsscore",
+    consistency: "Konstanz",
+    capture: "Aufnahmequalität",
+    liveMetrics: "Live-Bewegungsdaten",
+    phase: "Aktuelle Phase",
+    elbow: "Ellbogenwinkel",
+    shoulder: "Schulterwinkel",
+    rotation: "Rumpfrotation",
+    knee: "Kniebeugung",
+    extension: "Körperstreckung",
+    balance: "Balance",
+    footSpeed: "Relative Fußgeschwindigkeit",
+    centerSpeed: "Relative Schwerpunktbewegung",
+    stance: "Standbreite",
+    landing: "Landestabilität",
+    footworkCatalog: "Beinarbeitskatalog",
+    catalogCopy: "Komponenten und Bewegungsmuster folgen dem BWF-Zyklus Start → Annäherung → Schlag → Rückkehr.",
+    latest: "Letzte Wiederholung",
+    noReps: "Noch keine Wiederholung. Starte die Aufzeichnung und führe Vorbereitung, Schlag und Rückkehr deutlich aus.",
+    noFootworkReps: "Noch kein Beinarbeitszyklus. Starte die Aufzeichnung, führe die Übung aus und kehre vor der nächsten Wiederholung stabil zurück.",
+    reportTitle: "Motion-Capture-Bericht",
+    reportEmpty: "Keine aufgezeichnete Technikeinheit",
+    reportEmptyCopy: "Zeichne eine echte Einheit auf oder lade Beispieldaten, um die Berichtsstruktur anzusehen.",
+    backLive: "Zurück zum Training",
+    askCoach: "AI Coach fragen",
+    profile: "Technikprofil",
+    phaseQuality: "Qualität der sechs Phasen",
+    strengths: "Was gut funktioniert",
+    corrections: "Verbesserungsprioritäten",
+    repetitions: "Wiederholungsprotokoll",
+    recent: "Letzte Einheiten auf diesem Gerät",
+    noHistory: "Auf diesem Gerät wurde noch keine Einheit gespeichert.",
+    diagnostics: "Motion-Capture-System",
+    diagnosticsCopy: "MediaPipe läuft, wenn unterstützt, in einem Web Worker. Video wird weder zu Vercel noch zu Azure hochgeladen.",
+    limitation: "Motion Capture bewertet die Körperbewegung. Schlägerfläche und Federball sind nicht sichtbar; Kontaktqualität, Flugbahn und km/h werden daher nicht bestätigt.",
+    footworkLimitation: "Beinarbeit wird über zeitliche Hüft-, Knie- und Sprunggelenk-Landmarken bewertet. Ohne räumliche Kalibrierung kennt das System weder echte Feldposition noch Reaktion auf den Ball oder metrische Distanzen.",
+  },
 } as const;
+
+const SYSTEM_COPY: Record<StudioLanguage, {
+  techniqueChart: string;
+  bodyScaleUnit: string;
+  poseModel: string;
+  poseModelDetail: string;
+  workerReady: string;
+  workerFallback: string;
+  motionFeatures: string;
+  motionFeaturesDetail: string;
+  sixPhaseAssessment: string;
+  footworkEngine: string;
+  footworkEngineDetail: string;
+  fourPhaseCycle: string;
+  racketHand: string;
+  lockedPerSession: string;
+  privacy: string;
+  onDeviceVideo: string;
+  reducedMetricsOnly: string;
+  live: string;
+  off: string;
+  autoHandShort: string;
+  cameraUnavailable: string;
+}> = {
+  vi: {
+    techniqueChart: "Biểu đồ hồ sơ kỹ thuật",
+    bodyScaleUnit: "× tỷ lệ cơ thể",
+    poseModel: "Mô hình tư thế",
+    poseModelDetail: "MediaPipe Pose Lite · tối đa 4 người",
+    workerReady: "Web Worker · khóa mục tiêu",
+    workerFallback: "Luồng chính dự phòng · khóa mục tiêu",
+    motionFeatures: "Đặc trưng chuyển động",
+    motionFeaturesDetail: "Khớp 3D + cửa sổ thời gian",
+    sixPhaseAssessment: "Đánh giá chuỗi 6 pha",
+    footworkEngine: "Bộ chấm bộ pháp",
+    footworkEngineDetail: "Hông + gối + cổ chân",
+    fourPhaseCycle: "Chu kỳ chuyển động 4 pha của BWF",
+    racketHand: "Tay cầm vợt",
+    lockedPerSession: "Khóa trong từng phiên",
+    privacy: "Quyền riêng tư",
+    onDeviceVideo: "Video xử lý trên thiết bị",
+    reducedMetricsOnly: "Chỉ chỉ số rút gọn được gửi tới AI Coach",
+    live: "TRỰC TIẾP",
+    off: "TẮT",
+    autoHandShort: "TỰ NHẬN TAY",
+    cameraUnavailable: "Không thể truy cập camera. Hãy kiểm tra quyền camera và thử lại.",
+  },
+  en: {
+    techniqueChart: "Technique profile chart",
+    bodyScaleUnit: "× body scale",
+    poseModel: "Pose model",
+    poseModelDetail: "MediaPipe Pose Lite · up to 4 people",
+    workerReady: "Web Worker · target lock",
+    workerFallback: "Main-thread fallback · target lock",
+    motionFeatures: "Motion features",
+    motionFeaturesDetail: "3D joints + temporal window",
+    sixPhaseAssessment: "Six-phase sequence assessment",
+    footworkEngine: "Footwork engine",
+    footworkEngineDetail: "Hips + knees + ankles",
+    fourPhaseCycle: "BWF four-phase movement cycle",
+    racketHand: "Racket hand",
+    lockedPerSession: "Locked for each session",
+    privacy: "Privacy",
+    onDeviceVideo: "On-device video processing",
+    reducedMetricsOnly: "Only reduced metrics are sent to AI Coach",
+    live: "LIVE",
+    off: "OFF",
+    autoHandShort: "AUTO HAND",
+    cameraUnavailable: "Camera access failed. Check camera permission and try again.",
+  },
+  de: {
+    techniqueChart: "Diagramm des Technikprofils",
+    bodyScaleUnit: "× Körpermaß",
+    poseModel: "Posenmodell",
+    poseModelDetail: "MediaPipe Pose Lite · bis zu 4 Personen",
+    workerReady: "Web Worker · Zielfixierung",
+    workerFallback: "Ersatzbetrieb im Hauptthread · Zielfixierung",
+    motionFeatures: "Bewegungsmerkmale",
+    motionFeaturesDetail: "3D-Gelenke + zeitliches Analysefenster",
+    sixPhaseAssessment: "Bewertung des sechsphasigen Ablaufs",
+    footworkEngine: "Analyse der Lauftechnik",
+    footworkEngineDetail: "Hüfte + Knie + Sprunggelenke",
+    fourPhaseCycle: "Vierphasiger BWF-Bewegungszyklus",
+    racketHand: "Schlägerhand",
+    lockedPerSession: "Für jede Einheit festgelegt",
+    privacy: "Datenschutz",
+    onDeviceVideo: "Videoverarbeitung auf dem Gerät",
+    reducedMetricsOnly: "Nur reduzierte Messwerte werden an AI Coach gesendet",
+    live: "LIVE",
+    off: "AUS",
+    autoHandShort: "HAND AUTOMATISCH",
+    cameraUnavailable: "Kein Kamerazugriff. Prüfe die Kameraberechtigung und versuche es erneut.",
+  },
+};
 
 function drawTrackedPoses(
   canvas: HTMLCanvasElement,
@@ -396,8 +641,13 @@ function drawTrackedPoses(
     context.setLineDash([]);
 
     const color = pose.appearance?.shirtColor ?? "unknown";
-    const colorLabel = SHIRT_COLOR_LABELS[color][language].replace(/^áo /, "").replace(/ shirt$/, "");
-    const prefix = selected ? (language === "vi" ? "ĐÃ KHÓA" : "LOCKED") : (language === "vi" ? "VĐV" : "ATHLETE");
+    const colorLabel = SHIRT_COLOR_LABELS[color][language]
+      .replace(/^áo /, "")
+      .replace(/ shirt$/, "")
+      .replace(/ Trikot$/, "");
+    const prefix = selected
+      ? language === "vi" ? "ĐÃ KHÓA" : language === "de" ? "FIXIERT" : "LOCKED"
+      : language === "vi" ? "VĐV" : language === "de" ? "ATHLET" : "ATHLETE";
     const label = `${prefix} ${pose.trackId} · ${colorLabel}`.toUpperCase();
     const fontSize = Math.max(12, Math.round(canvas.width / 75));
     context.font = `800 ${fontSize}px ui-monospace, SFMono-Regular, monospace`;
@@ -424,6 +674,140 @@ function shirtColorLabel(color: ShirtColor, language: StudioLanguage) {
 
 function positionLabel(position: HorizontalPosition, language: StudioLanguage) {
   return POSITION_LABELS[position][language];
+}
+
+function techniqueLabel(mode: TechniqueMode, language: StudioLanguage) {
+  const item = TECHNIQUES.find((entry) => entry.value === mode);
+  if (language === "vi") return item?.labelVi;
+  if (language === "de") return item?.labelDe;
+  return item?.labelEn;
+}
+
+function catalogLabel(mode: FootworkMode, language: StudioLanguage) {
+  const item = FOOTWORK_CATALOG.find((entry) => entry.value === mode);
+  if (language === "vi") return item?.labelVi;
+  if (language === "de") return item?.labelDe;
+  return item?.labelEn;
+}
+
+function SessionDropdown<T extends string>({
+  value,
+  options,
+  disabled = false,
+  ariaLabel,
+  onChange,
+}: {
+  value: T;
+  options: Array<SessionDropdownOption<T>>;
+  disabled?: boolean;
+  ariaLabel: string;
+  onChange: (value: T) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  const selected = options.find((option) => option.value === value) ?? options[0];
+  const groups = options.reduce<Array<{ label?: string; options: Array<SessionDropdownOption<T>> }>>((result, option) => {
+    const current = result.at(-1);
+    if (!current || current.label !== option.group) result.push({ label: option.group, options: [option] });
+    else current.options.push(option);
+    return result;
+  }, []);
+
+  const closeAndFocus = () => {
+    setOpen(false);
+    requestAnimationFrame(() => detailsRef.current?.querySelector<HTMLElement>("summary")?.focus());
+  };
+
+  return (
+    <details
+      ref={detailsRef}
+      className={styles.sessionDropdown}
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closeAndFocus();
+        }
+      }}
+    >
+      <summary
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-disabled={disabled}
+        tabIndex={disabled ? -1 : 0}
+        onClick={(event) => {
+          if (disabled) event.preventDefault();
+        }}
+      >
+        <span>{selected?.label ?? value}</span>
+        <ChevronDown aria-hidden="true" />
+      </summary>
+      <div className={styles.sessionDropdownMenu} role="listbox" aria-label={ariaLabel}>
+        {groups.map((group, groupIndex) => (
+          <div
+            className={styles.sessionDropdownGroup}
+            key={`${group.label ?? "default"}-${groupIndex}`}
+            role={group.label ? "group" : "presentation"}
+            aria-label={group.label}
+          >
+            {group.label ? <span className={styles.sessionDropdownGroupLabel}>{group.label}</span> : null}
+            {group.options.map((option) => {
+              const active = option.value === value;
+              return (
+                <button
+                  type="button"
+                  key={option.value}
+                  role="option"
+                  aria-selected={active}
+                  className={active ? styles.sessionDropdownOptionActive : undefined}
+                  onClick={() => {
+                    onChange(option.value);
+                    closeAndFocus();
+                  }}
+                >
+                  <span>{option.label}</span>
+                  {active ? <Check aria-hidden="true" /> : null}
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function stableShirtColor(
+  memory: Map<number, AthleteColorMemory>,
+  trackId: number,
+  detected: ShirtColor,
+) {
+  const current = memory.get(trackId);
+  if (!current) {
+    memory.set(trackId, { displayed: detected, candidate: detected, candidateFrames: 1 });
+    return detected;
+  }
+  if (detected === "unknown" || detected === current.displayed) {
+    current.candidate = current.displayed;
+    current.candidateFrames = 0;
+    return current.displayed;
+  }
+  if (detected === current.candidate) current.candidateFrames += 1;
+  else {
+    current.candidate = detected;
+    current.candidateFrames = 1;
+  }
+  const requiredFrames = current.displayed === "unknown" ? 3 : 7;
+  if (current.candidateFrames >= requiredFrames) {
+    current.displayed = detected;
+    current.candidateFrames = 0;
+  }
+  return current.displayed;
 }
 
 function addPoseAppearances(
@@ -453,37 +837,36 @@ function addPoseAppearances(
 }
 
 function livePhaseLabel(phase: SmashMetrics["phase"], language: StudioLanguage) {
-  const labels: Record<SmashMetrics["phase"], { vi: string; en: string }> = {
-    READY: { vi: "Sẵn sàng", en: "Ready" },
-    PREPARATION: { vi: "Chuẩn bị", en: "Preparation" },
-    LOADING: { vi: "Kéo vợt", en: "Loading" },
-    ACCELERATION: { vi: "Tăng tốc", en: "Acceleration" },
-    CONTACT: { vi: "Vùng tiếp xúc", en: "Contact zone" },
-    FOLLOW_THROUGH: { vi: "Theo đà", en: "Follow-through" },
+  const labels: Record<SmashMetrics["phase"], Record<StudioLanguage, string>> = {
+    READY: { vi: "Sẵn sàng", en: "Ready", de: "Bereit" },
+    PREPARATION: { vi: "Chuẩn bị", en: "Preparation", de: "Vorbereitung" },
+    LOADING: { vi: "Kéo vợt", en: "Loading", de: "Ausholen" },
+    ACCELERATION: { vi: "Tăng tốc", en: "Acceleration", de: "Beschleunigung" },
+    CONTACT: { vi: "Vùng tiếp xúc", en: "Contact zone", de: "Treffzone" },
+    FOLLOW_THROUGH: { vi: "Theo đà", en: "Follow-through", de: "Ausschwung" },
   };
   return labels[phase][language];
 }
 
 function liveFootworkPhaseLabel(metrics: SmashMetrics, language: StudioLanguage) {
   const moving = metrics.footSpeed > 0.34 || metrics.centerSpeed > 0.22;
-  if (!moving) return language === "vi" ? "Sẵn sàng / hồi vị" : "Ready / recovery";
+  if (!moving) return language === "vi" ? "Sẵn sàng / hồi vị" : language === "de" ? "Bereit / Rückkehr" : "Ready / recovery";
   if (metrics.verticalBounce > 0.5 || metrics.kneeFlexion > 30) {
-    return language === "vi" ? "Khởi động & tạo tải" : "Start & loading";
+    return language === "vi" ? "Khởi động & tạo tải" : language === "de" ? "Start & Belastung" : "Start & loading";
   }
-  if (metrics.centerSpeed > 0.48) return language === "vi" ? "Tiếp cận" : "Approach";
-  return language === "vi" ? "Trụ & cân bằng" : "Plant & balance";
+  if (metrics.centerSpeed > 0.48) return language === "vi" ? "Tiếp cận" : language === "de" ? "Annäherung" : "Approach";
+  return language === "vi" ? "Trụ & cân bằng" : language === "de" ? "Stand & Balance" : "Plant & balance";
 }
 
 function footworkLabel(mode: FootworkMode, language: StudioLanguage) {
-  const item = FOOTWORK_CATALOG.find((entry) => entry.value === mode);
-  return language === "vi" ? item?.labelVi : item?.labelEn;
+  return catalogLabel(mode, language);
 }
 
 function createSummary(movements: AnalysisMovement[], language: StudioLanguage): AnalysisSummary {
   if (!movements.length) {
     return {
-      headline: language === "vi" ? "Chưa có lần lặp" : "No repetitions",
-      insight: language === "vi" ? "Chưa đủ dữ liệu để tạo báo cáo." : "Not enough data to create a report.",
+      headline: language === "vi" ? "Chưa có lần lặp" : language === "de" ? "Keine Wiederholungen" : "No repetitions",
+      insight: language === "vi" ? "Chưa đủ dữ liệu để tạo báo cáo." : language === "de" ? "Nicht genügend Daten für einen Bericht." : "Not enough data to create a report.",
       averageScore: 0,
       consistency: 0,
       strongestPhase: "—",
@@ -502,20 +885,34 @@ function createSummary(movements: AnalysisMovement[], language: StudioLanguage):
   movements.forEach((movement) => movement.corrections.forEach((correction) =>
     correctionCounts.set(correction, (correctionCounts.get(correction) ?? 0) + 1)));
   const priority = [...correctionCounts.entries()].sort((left, right) => right[1] - left[1])[0]?.[0]
-    ?? (language === "vi" ? "Duy trì nhịp hiện tại" : "Maintain the current rhythm");
+    ?? (language === "vi" ? "Duy trì nhịp hiện tại" : language === "de" ? "Aktuellen Rhythmus beibehalten" : "Maintain the current rhythm");
   const strongestPhase = phaseLabel(phaseScores[0]?.phase ?? "ready", language);
   return {
     headline: language === "vi"
       ? `${movements.length} lần lặp · ${averageScore}/100 điểm chuyển động`
-      : `${movements.length} reps · ${averageScore}/100 motion score`,
+      : language === "de"
+        ? `${movements.length} Wiederholungen · ${averageScore}/100 Bewegungsscore`
+        : `${movements.length} reps · ${averageScore}/100 motion score`,
     insight: language === "vi"
       ? `Pha ổn định nhất là ${strongestPhase}. Ưu tiên tiếp theo: ${priority}`
-      : `The strongest phase is ${strongestPhase}. Next priority: ${priority}`,
+      : language === "de"
+        ? `Die stabilste Phase ist ${strongestPhase}. Nächste Priorität: ${priority}`
+        : `The strongest phase is ${strongestPhase}. Next priority: ${priority}`,
     averageScore,
     consistency,
     strongestPhase,
     priority,
   };
+}
+
+function localizeAnalysisMovement(
+  movement: AnalysisMovement,
+  language: StudioLanguage,
+): AnalysisMovement {
+  const localized = movement.module === "footwork"
+    ? localizeFootworkAssessment(movement, language)
+    : localizeMotionAssessment(movement, language);
+  return { ...localized, index: movement.index, recordedAt: movement.recordedAt };
 }
 
 function isMotionSession(value: unknown): value is MotionSession {
@@ -608,18 +1005,19 @@ function createDemoMovements(
   trainingModule: TrainingModule,
   strokeMode: TechniqueMode,
   footworkMode: FootworkMode,
+  language: StudioLanguage,
 ): AnalysisMovement[] {
   if (trainingModule === "footwork") {
     const selected = footworkMode === "footwork_auto" ? "lunge" : footworkMode;
     return Array.from({ length: 5 }, (_, index) => ({
-      ...assessFootworkWindow(demoFootworkSamples(index, selected), selected, "right"),
+      ...assessFootworkWindow(demoFootworkSamples(index, selected), selected, "right", language),
       index: index + 1,
       recordedAt: new Date(Date.now() - (5 - index) * 7_000).toISOString(),
     }));
   }
   const selected = strokeMode === "open" ? "smash" : strokeMode;
   return Array.from({ length: 5 }, (_, index) => ({
-    ...assessMotionWindow(demoSamples(index, selected), selected, "right"),
+    ...assessMotionWindow(demoSamples(index, selected), selected, "right", language),
     index: index + 1,
     recordedAt: new Date(Date.now() - (5 - index) * 7_000).toISOString(),
   }));
@@ -639,7 +1037,7 @@ function ScoreRing({ value, label }: { value: number; label: string }) {
   );
 }
 
-function TechniqueRadar({ movement }: { movement: AnalysisMovement }) {
+function TechniqueRadar({ movement, ariaLabel }: { movement: AnalysisMovement; ariaLabel: string }) {
   const values = [movement.postureScore, movement.rhythmScore, movement.recoveryScore, movement.metrics.balance, movement.captureQuality];
   const points = values.map((value, index) => {
     const angle = -Math.PI / 2 + (index * Math.PI * 2) / values.length;
@@ -647,7 +1045,7 @@ function TechniqueRadar({ movement }: { movement: AnalysisMovement }) {
     return `${60 + Math.cos(angle) * radius},${60 + Math.sin(angle) * radius}`;
   }).join(" ");
   return (
-    <svg className={styles.radar} viewBox="0 0 120 120" aria-label="Technique profile chart">
+    <svg className={styles.radar} viewBox="0 0 120 120" aria-label={ariaLabel}>
       {[20, 35, 50].map((radius) => (
         <polygon key={radius} points={values.map((_, index) => {
           const angle = -Math.PI / 2 + (index * Math.PI * 2) / values.length;
@@ -672,6 +1070,7 @@ type MotionAnalyzerProps = {
 
 export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach }: MotionAnalyzerProps) {
   const copy = UI[language];
+  const systemCopy = SYSTEM_COPY[language];
   const [status, setStatus] = useState<AnalyzerStatus>("idle");
   const [recording, setRecording] = useState(false);
   const [source, setSource] = useState<AnalysisSource>("none");
@@ -679,6 +1078,9 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   const [visibleAthletes, setVisibleAthletes] = useState<AthleteOption[]>([]);
   const [selectedTrackId, setSelectedTrackId] = useState<number | null>(null);
   const [targetStatus, setTargetStatus] = useState<TargetStatus>("waiting");
+  const [targetPickerExpanded, setTargetPickerExpanded] = useState(true);
+  const [pendingTarget, setPendingTarget] = useState<AthleteOption | null>(null);
+  const [focusReticle, setFocusReticle] = useState<FocusReticle | null>(null);
   const [workerStatus, setWorkerStatus] = useState<WorkerStatus>("checking");
   const [storageStatus, setStorageStatus] = useState<StorageStatus>("checking");
   const [trainingModule, setTrainingModule] = useState<TrainingModule>("stroke");
@@ -692,6 +1094,8 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   const [history, setHistory] = useState<MotionSession[]>([]);
   const [errorMessage, setErrorMessage] = useState("");
   const [focusMode, setFocusMode] = useState(false);
+  const [cameraSettingsOpen, setCameraSettingsOpen] = useState(false);
+  const [sessionSetupOpen, setSessionSetupOpen] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -712,6 +1116,10 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   const visibleAthletesSignatureRef = useRef("");
   const appearanceCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const selectedAppearanceRef = useRef<PoseAppearance | undefined>(undefined);
+  const pendingTrackIdRef = useRef<number | null>(null);
+  const pendingAppearanceRef = useRef<PoseAppearance | undefined>(undefined);
+  const athletePositionsRef = useRef(new Map<number, HorizontalPosition>());
+  const athleteColorsRef = useRef(new Map<number, AthleteColorMemory>());
   const memoryRef = useRef<PoseFrameMemory | null>(null);
   const lastContactRef = useRef(-10_000);
   const samplesRef = useRef<PoseLiteSample[]>([]);
@@ -742,6 +1150,13 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   useEffect(() => { trainingModuleRef.current = trainingModule; }, [trainingModule]);
   useEffect(() => { footworkModeRef.current = footworkMode; }, [footworkMode]);
   useEffect(() => {
+    if (!movementsRef.current.length) return;
+    const localized = movementsRef.current.map((movement) => localizeAnalysisMovement(movement, language));
+    movementsRef.current = localized;
+    setMovements(localized);
+    setSummary(createSummary(localized, language));
+  }, [language]);
+  useEffect(() => {
     preferredHandRef.current = preferredHand;
     memoryRef.current = null;
   }, [preferredHand]);
@@ -752,6 +1167,20 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = previousOverflow; };
   }, [focusMode]);
+
+  useEffect(() => {
+    if (!sessionSetupOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSessionSetupOpen(false);
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [sessionSetupOpen]);
 
   useEffect(() => {
     const worker = typeof Worker === "undefined"
@@ -847,8 +1276,8 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     const worker = workerRef.current;
     if (!worker || !workerInitializedRef.current) {
       return Promise.resolve(trainingModuleRef.current === "footwork"
-        ? assessFootworkWindow(samples, footworkModeRef.current, dominantSide)
-        : assessMotionWindow(samples, modeRef.current, dominantSide));
+        ? assessFootworkWindow(samples, footworkModeRef.current, dominantSide, language)
+        : assessMotionWindow(samples, modeRef.current, dominantSide, language));
     }
     return new Promise<MotionAssessment>((resolve) => {
       const requestId = crypto.randomUUID();
@@ -859,19 +1288,21 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
         samples,
         mode: footworkModeRef.current,
         dominantSide,
+        language,
       } : {
         type: "analyzeMotion",
         requestId,
         samples,
         mode: modeRef.current,
         dominantSide,
+        language,
       });
     });
-  }, []);
+  }, [language]);
 
   const registerMovement = useCallback((samples: PoseLiteSample[], dominantSide: "left" | "right") => {
     const index = nextIndexRef.current++;
-    setCurrentMessage(language === "vi" ? `Đang chấm lần lặp ${index}…` : `Scoring repetition ${index}…`);
+    setCurrentMessage(language === "vi" ? `Đang chấm lần lặp ${index}…` : language === "de" ? `Wiederholung ${index} wird bewertet…` : `Scoring repetition ${index}…`);
     void classifyMotion(samples, dominantSide).then((assessment) => {
       const event: AnalysisMovement = {
         ...assessment,
@@ -892,18 +1323,86 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     lastContactRef.current = -10_000;
   }, []);
 
-  const selectAthlete = useCallback((trackId: number) => {
+  const selectAthlete = useCallback((trackId: number, fallbackAppearance?: PoseAppearance) => {
     if (recordingRef.current) return;
     const target = trackedPosesRef.current.find((pose) => pose.trackId === trackId);
     selectedTrackIdRef.current = trackId;
-    selectedAppearanceRef.current = target?.observedAppearance ?? target?.appearance;
+    pendingTrackIdRef.current = null;
+    pendingAppearanceRef.current = undefined;
+    setPendingTarget(null);
+    setFocusReticle(null);
+    selectedAppearanceRef.current = target?.observedAppearance ?? target?.appearance ?? fallbackAppearance;
     targetStatusRef.current = "locked";
     setSelectedTrackId(trackId);
     setTargetStatus("locked");
     setAthleteDetected(true);
+    setTargetPickerExpanded(false);
     resetTargetMotion();
     setCurrentMessage(copy.notRecording);
   }, [copy.notRecording, resetTargetMotion]);
+
+  const requestAthleteSelection = useCallback((trackId: number) => {
+    if (recordingRef.current || selectedTrackIdRef.current !== null) return;
+    const pose = trackedPosesRef.current.find((entry) => entry.trackId === trackId);
+    if (!pose) {
+      setCurrentMessage(copy.targetUnavailable);
+      return;
+    }
+    const option = visibleAthletes.find((athlete) => athlete.trackId === trackId) ?? {
+      trackId,
+      shirtColor: pose.appearance?.shirtColor ?? "unknown",
+      position: horizontalPosition(pose.bounds.centerX),
+    };
+    pendingTrackIdRef.current = trackId;
+    pendingAppearanceRef.current = pose.observedAppearance ?? pose.appearance;
+    setPendingTarget(option);
+  }, [copy.targetUnavailable, visibleAthletes]);
+
+  const cancelAthleteSelection = useCallback(() => {
+    pendingTrackIdRef.current = null;
+    pendingAppearanceRef.current = undefined;
+    setPendingTarget(null);
+    setFocusReticle(null);
+  }, []);
+
+  const beginTargetChange = useCallback(() => {
+    if (recordingRef.current) return;
+    selectedTrackIdRef.current = null;
+    selectedAppearanceRef.current = undefined;
+    pendingTrackIdRef.current = null;
+    pendingAppearanceRef.current = undefined;
+    setPendingTarget(null);
+    setFocusReticle(null);
+    setSelectedTrackId(null);
+    setAthleteDetected(false);
+    const nextStatus: TargetStatus = trackedPosesRef.current.length > 0 ? "selecting" : "waiting";
+    targetStatusRef.current = nextStatus;
+    setTargetStatus(nextStatus);
+    setTargetPickerExpanded(true);
+    resetTargetMotion();
+    setCurrentMessage(copy.targetRequired);
+  }, [copy.targetRequired, resetTargetMotion]);
+
+  const confirmAthleteSelection = useCallback(() => {
+    if (!pendingTarget) return;
+    const stillVisible = trackedPosesRef.current.some((pose) => pose.trackId === pendingTarget.trackId);
+    const stillTracked = trackerRef.current.tracks.some((track) => track.id === pendingTarget.trackId);
+    if (!stillVisible && !stillTracked) {
+      cancelAthleteSelection();
+      setCurrentMessage(copy.targetUnavailable);
+      return;
+    }
+    selectAthlete(pendingTarget.trackId, pendingAppearanceRef.current);
+  }, [cancelAthleteSelection, copy.targetUnavailable, pendingTarget, selectAthlete]);
+
+  useEffect(() => {
+    if (!pendingTarget) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") cancelAthleteSelection();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [cancelAthleteSelection, pendingTarget]);
 
   const processPoses = useCallback((poses: VisionWorkerPose[], now: number) => {
     const canvas = canvasRef.current;
@@ -918,13 +1417,28 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     const tracked = updateMultiPoseTracker(trackerRef.current, observations, now);
     trackerRef.current = tracked.state;
     trackedPosesRef.current = tracked.poses;
-    const athleteOptions = tracked.poses.map((pose): AthleteOption => ({
-      trackId: pose.trackId,
-      shirtColor: pose.appearance && pose.appearance.confidence >= 0.34
+    const visibleTrackIds = new Set(tracked.poses.map((pose) => pose.trackId));
+    athletePositionsRef.current.forEach((_, trackId) => {
+      if (!visibleTrackIds.has(trackId)) athletePositionsRef.current.delete(trackId);
+    });
+    athleteColorsRef.current.forEach((_, trackId) => {
+      if (!visibleTrackIds.has(trackId)) athleteColorsRef.current.delete(trackId);
+    });
+    const athleteOptions = tracked.poses.map((pose): AthleteOption => {
+      const position = horizontalPosition(
+        pose.bounds.centerX,
+        athletePositionsRef.current.get(pose.trackId),
+      );
+      athletePositionsRef.current.set(pose.trackId, position);
+      const detectedColor = pose.appearance && pose.appearance.confidence >= 0.34
         ? pose.appearance.shirtColor
-        : "unknown",
-      position: horizontalPosition(pose.bounds.centerX),
-    }));
+        : "unknown";
+      return {
+        trackId: pose.trackId,
+        shirtColor: stableShirtColor(athleteColorsRef.current, pose.trackId, detectedColor),
+        position,
+      };
+    });
     const signature = athleteOptions
       .map((option) => `${option.trackId}:${option.shirtColor}:${option.position}`)
       .join(",");
@@ -933,41 +1447,36 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
       setVisibleAthletes(athleteOptions);
     }
 
-    let targetId = selectedTrackIdRef.current;
-    if (targetId === null && tracked.poses.length === 1) {
-      targetId = tracked.poses[0].trackId;
-      selectedTrackIdRef.current = targetId;
-      selectedAppearanceRef.current = tracked.poses[0].observedAppearance ?? tracked.poses[0].appearance;
-      setSelectedTrackId(targetId);
-      resetTargetMotion();
-    }
+    const targetId = selectedTrackIdRef.current;
     let pose = targetId === null
       ? null
       : tracked.poses.find((entry) => entry.trackId === targetId) ?? null;
     const selectedAppearance = selectedAppearanceRef.current;
     const currentAppearance = pose?.observedAppearance ?? pose?.appearance;
     if (pose && selectedAppearance && currentAppearance) {
-      const knownColorMismatch = selectedAppearance.shirtColor !== "unknown"
-        && currentAppearance.shirtColor !== "unknown"
-        && selectedAppearance.shirtColor !== currentAppearance.shirtColor
-        && selectedAppearance.confidence >= 0.4
-        && currentAppearance.confidence >= 0.4;
-      const appearanceMismatch = appearanceDistance(selectedAppearance, currentAppearance) > 0.68;
-      if (knownColorMismatch && appearanceMismatch) {
-        pose = null;
-      } else {
-        selectedAppearanceRef.current = blendAppearance(selectedAppearance, currentAppearance, 0.16);
-      }
-    } else if (pose && currentAppearance) {
+      const alternatives = tracked.poses
+        .filter((entry) => entry.trackId !== pose?.trackId)
+        .map((entry) => entry.observedAppearance ?? entry.appearance)
+        .filter((appearance): appearance is PoseAppearance => Boolean(appearance));
+      if (appearanceIdentityConflict(selectedAppearance, currentAppearance, alternatives)) pose = null;
+    } else if (pose && !selectedAppearance && currentAppearance) {
       selectedAppearanceRef.current = currentAppearance;
     }
-    drawTrackedPoses(canvas, tracked.poses, connectionsRef.current, pose ? targetId : null, language);
+    const visiblePoses = targetId === null ? tracked.poses : pose ? [pose] : [];
+    drawTrackedPoses(
+      canvas,
+      visiblePoses,
+      connectionsRef.current,
+      pendingTrackIdRef.current ?? (pose ? targetId : null),
+      language,
+    );
 
     if (targetId === null) {
-      const nextStatus: TargetStatus = tracked.poses.length > 1 ? "selecting" : "waiting";
+      const nextStatus: TargetStatus = tracked.poses.length > 0 ? "selecting" : "waiting";
       if (targetStatusRef.current !== nextStatus) {
         targetStatusRef.current = nextStatus;
         setTargetStatus(nextStatus);
+        if (nextStatus === "selecting") setTargetPickerExpanded(true);
       }
       setAthleteDetected(false);
       resetTargetMotion();
@@ -977,6 +1486,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
       if (targetStatusRef.current !== "lost") {
         targetStatusRef.current = "lost";
         setTargetStatus("lost");
+        setTargetPickerExpanded(false);
         setCurrentMessage(copy.targetLost);
       }
       setAthleteDetected(false);
@@ -986,6 +1496,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     if (targetStatusRef.current !== "locked") {
       targetStatusRef.current = "locked";
       setTargetStatus("locked");
+      setTargetPickerExpanded(false);
       setCurrentMessage(recordingRef.current
         ? trainingModuleRef.current === "footwork" ? copy.footworkWaiting : copy.liveWaiting
         : copy.notRecording);
@@ -1082,7 +1593,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   useEffect(() => { processFrameRef.current = processPoses; }, [processPoses]);
 
   const selectAthleteFromCamera = useCallback((event: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (status !== "live" || recordingRef.current) return;
+    if (status !== "live" || recordingRef.current || selectedTrackIdRef.current !== null) return;
     const canvas = canvasRef.current;
     if (!canvas || canvas.width <= 0 || canvas.height <= 0) return;
     const rect = canvas.getBoundingClientRect();
@@ -1094,8 +1605,15 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     const x = (event.clientX - rect.left - offsetX) / renderedWidth;
     const y = (event.clientY - rect.top - offsetY) / renderedHeight;
     const target = hitTestTrackedPose(trackedPosesRef.current, x, y);
-    if (target) selectAthlete(target.trackId);
-  }, [selectAthlete, status]);
+    if (target) {
+      setFocusReticle({
+        x: ((event.clientX - rect.left) / rect.width) * 100,
+        y: ((event.clientY - rect.top) / rect.height) * 100,
+        token: Date.now(),
+      });
+      requestAthleteSelection(target.trackId);
+    }
+  }, [requestAthleteSelection, status]);
 
   const startLoop = useCallback(() => {
     const detect = () => {
@@ -1149,15 +1667,24 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   const startCamera = useCallback(async () => {
     setStatus("loading");
     setErrorMessage("");
+    setCameraSettingsOpen(false);
+    setSessionSetupOpen(false);
     trackerRef.current = createMultiPoseTrackerState();
     trackedPosesRef.current = [];
     selectedTrackIdRef.current = null;
+    pendingTrackIdRef.current = null;
+    pendingAppearanceRef.current = undefined;
+    setPendingTarget(null);
+    setFocusReticle(null);
     selectedAppearanceRef.current = undefined;
+    athletePositionsRef.current.clear();
+    athleteColorsRef.current.clear();
     targetStatusRef.current = "waiting";
     visibleAthletesSignatureRef.current = "";
     setVisibleAthletes([]);
     setSelectedTrackId(null);
     setTargetStatus("waiting");
+    setTargetPickerExpanded(true);
     setAthleteDetected(false);
     resetTargetMotion();
     try {
@@ -1168,7 +1695,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
       streamRef.current = stream;
       const video = videoRef.current;
       const canvas = canvasRef.current;
-      if (!video || !canvas) throw new Error("Camera surface unavailable");
+      if (!video || !canvas) throw new Error(systemCopy.cameraUnavailable);
       video.srcObject = stream;
       await video.play();
       canvas.width = video.videoWidth || 1280;
@@ -1198,14 +1725,17 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
       setStatus("error");
-      setErrorMessage(error instanceof Error ? error.message : "Camera unavailable");
+      setErrorMessage(error instanceof Error && error.message === systemCopy.cameraUnavailable
+        ? error.message
+        : systemCopy.cameraUnavailable);
     }
-  }, [copy.notRecording, initializeWorker, resetTargetMotion, startLoop]);
+  }, [copy.notRecording, initializeWorker, resetTargetMotion, startLoop, systemCopy.cameraUnavailable]);
 
   const stopCamera = useCallback(() => {
     runningRef.current = false;
     recordingRef.current = false;
     setRecording(false);
+    setCameraSettingsOpen(false);
     if (animationRef.current !== null) cancelAnimationFrame(animationRef.current);
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
@@ -1216,12 +1746,19 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     trackerRef.current = createMultiPoseTrackerState();
     trackedPosesRef.current = [];
     selectedTrackIdRef.current = null;
+    pendingTrackIdRef.current = null;
+    pendingAppearanceRef.current = undefined;
+    setPendingTarget(null);
+    setFocusReticle(null);
     selectedAppearanceRef.current = undefined;
+    athletePositionsRef.current.clear();
+    athleteColorsRef.current.clear();
     targetStatusRef.current = "waiting";
     visibleAthletesSignatureRef.current = "";
     setVisibleAthletes([]);
     setSelectedTrackId(null);
     setTargetStatus("waiting");
+    setTargetPickerExpanded(true);
     setAthleteDetected(false);
     setStatus("idle");
     resetTargetMotion();
@@ -1280,6 +1817,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
         return;
       }
       resetSet("live");
+      setCameraSettingsOpen(false);
       recordingRef.current = true;
       setRecording(true);
       setCurrentMessage(trainingModuleRef.current === "footwork" ? copy.footworkWaiting : copy.liveWaiting);
@@ -1294,7 +1832,8 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   }, [copy.footworkWaiting, copy.liveWaiting, copy.targetRequired, language, onNavigate, resetSet, saveCurrentSession, status]);
 
   const loadDemo = useCallback(() => {
-    const demo = createDemoMovements(trainingModule, mode, footworkMode);
+    setSessionSetupOpen(false);
+    const demo = createDemoMovements(trainingModule, mode, footworkMode, language);
     movementsRef.current = demo;
     nextIndexRef.current = demo.length + 1;
     setMovements(demo);
@@ -1311,25 +1850,30 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   }, [loadDemo]);
 
   const loadHistory = useCallback((session: MotionSession) => {
-    movementsRef.current = session.movements;
-    nextIndexRef.current = session.movements.length + 1;
-    setMovements(session.movements);
-    setSummary(session.summary);
+    const localized = session.movements.map((movement) => localizeAnalysisMovement(movement, language));
+    movementsRef.current = localized;
+    nextIndexRef.current = localized.length + 1;
+    setMovements(localized);
+    setSummary(createSummary(localized, language));
     const sessionModule = session.trainingModule ?? session.movements[0]?.module ?? "stroke";
     setTrainingModule(sessionModule);
     if (sessionModule === "footwork") setFootworkMode(session.drillMode as FootworkMode);
     else setMode(session.drillMode as TechniqueMode);
     setPreferredHand(session.preferredHand);
     setSource("history");
-  }, []);
+  }, [language]);
 
   const profileMovement = latest ?? movements[0] ?? null;
-  const dateFormatter = useMemo(() => new Intl.DateTimeFormat(language === "vi" ? "vi-VN" : "en-US", {
+  const dateFormatter = useMemo(() => new Intl.DateTimeFormat(language === "vi" ? "vi-VN" : language === "de" ? "de-DE" : "en-US", {
     day: "2-digit",
     month: "short",
     hour: "2-digit",
     minute: "2-digit",
   }), [language]);
+  const localizedHistory = useMemo(() => history.map((session) => {
+    const localized = session.movements.map((movement) => localizeAnalysisMovement(movement, language));
+    return { ...session, movements: localized, summary: createSummary(localized, language) };
+  }), [history, language]);
 
   return (
     <section id="live-studio" className={styles.module} aria-label={copy.title}>
@@ -1339,66 +1883,166 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
           <h2>{trainingModule === "footwork" ? copy.footworkTitle : copy.title}</h2>
           <p>{trainingModule === "footwork" ? copy.footworkDescription : copy.description}</p>
         </div>
-        <div className={styles.headerShield}><ShieldCheck /><span>{copy.privacy}</span></div>
       </header>
 
-      <section className={styles.setupBar} hidden={view !== "live"}>
-        <div className={styles.modulePicker}>
-          <span>{copy.moduleLabel}</span>
-          <div className={styles.moduleSwitch}>
-            <button type="button" className={trainingModule === "stroke" ? styles.moduleActive : ""} disabled={recording} onClick={() => switchTrainingModule("stroke")}><Target />{copy.strokeModule}</button>
-            <button type="button" className={trainingModule === "footwork" ? styles.moduleActive : ""} disabled={recording} onClick={() => switchTrainingModule("footwork")}><Footprints />{copy.footworkModule}</button>
+      <section className={styles.sessionSetupLauncher} hidden={view !== "live" || status === "live"}>
+        <button
+          type="button"
+          onClick={() => setSessionSetupOpen(true)}
+          aria-haspopup="dialog"
+          aria-expanded={sessionSetupOpen}
+        >
+          <span className={styles.sessionSetupIcon}><SlidersHorizontal /></span>
+          <span className={styles.sessionSetupSummary}>
+            <small>{copy.sessionSetup}</small>
+            <strong>{trainingModule === "stroke"
+              ? `${copy.strokeModule} · ${techniqueLabel(mode, language)}`
+              : `${copy.footworkModule} · ${catalogLabel(footworkMode, language)}`}</strong>
+            <em>{copy.sessionSummary}</em>
+          </span>
+          <span className={styles.sessionSetupPrivacy}><ShieldCheck />{copy.privacy}</span>
+          <ChevronRight aria-hidden="true" />
+        </button>
+      </section>
+
+      {view === "live" && sessionSetupOpen ? createPortal(<div
+        className={styles.sessionSetupBackdrop}
+        onPointerDown={(event) => {
+          if (event.target === event.currentTarget) setSessionSetupOpen(false);
+        }}
+      >
+        <section
+          className={styles.sessionSetupModal}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="session-setup-title"
+        >
+          <header className={styles.sessionSetupModalHeader}>
+            <div><span>{copy.module}</span><h3 id="session-setup-title">{copy.sessionSetup}</h3><p>{copy.sessionSetupCopy}</p></div>
+            <button type="button" onClick={() => setSessionSetupOpen(false)} aria-label={copy.closeSessionSetup}><X /></button>
+          </header>
+
+          <div className={styles.sessionSetupPrivacyBanner}><ShieldCheck /><span>{copy.privacy}</span></div>
+
+          <div className={styles.sessionSetupForm}>
+            <div className={styles.modulePicker}>
+              <span>{copy.moduleLabel}</span>
+              <div className={styles.moduleSwitch}>
+                <button type="button" className={trainingModule === "stroke" ? styles.moduleActive : ""} disabled={recording} onClick={() => switchTrainingModule("stroke")}><Target />{copy.strokeModule}</button>
+                <button type="button" className={trainingModule === "footwork" ? styles.moduleActive : ""} disabled={recording} onClick={() => switchTrainingModule("footwork")}><Footprints />{copy.footworkModule}</button>
+              </div>
+            </div>
+            <div className={styles.sessionSetupField}><span>{trainingModule === "stroke" ? copy.technique : copy.footwork}</span>
+              {trainingModule === "stroke" ? <SessionDropdown<TechniqueMode>
+                value={mode}
+                disabled={recording}
+                ariaLabel={copy.technique}
+                onChange={setMode}
+                options={TECHNIQUES.map((item) => ({ value: item.value, label: techniqueLabel(item.value, language) ?? item.value }))}
+              /> : <SessionDropdown<FootworkMode>
+                value={footworkMode}
+                disabled={recording}
+                ariaLabel={copy.footwork}
+                onChange={setFootworkMode}
+                options={(["foundation", "court_pattern", "advanced"] as const).flatMap((group) => FOOTWORK_CATALOG.filter((item) => item.group === group).map((item) => ({ value: item.value, label: catalogLabel(item.value, language) ?? item.value, group: FOOTWORK_GROUP_LABELS[group][language] })))}
+              />}
+            </div>
+            <div className={styles.sessionSetupField}><span>{trainingModule === "footwork" ? copy.dominantSide : copy.hand}</span>
+              <SessionDropdown<PreferredHand>
+                value={preferredHand}
+                disabled={recording}
+                ariaLabel={trainingModule === "footwork" ? copy.dominantSide : copy.hand}
+                onChange={setPreferredHand}
+                options={[
+                  { value: "auto", label: copy.autoHand },
+                  { value: "right", label: copy.right },
+                  { value: "left", label: copy.left },
+                ]}
+              />
+            </div>
           </div>
-        </div>
-        <label><span>{trainingModule === "stroke" ? copy.technique : copy.footwork}</span>
-          {trainingModule === "stroke" ? <select value={mode} disabled={recording} onChange={(event) => setMode(event.target.value as TechniqueMode)}>{TECHNIQUES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select> : <select value={footworkMode} disabled={recording} onChange={(event) => setFootworkMode(event.target.value as FootworkMode)}>{(["foundation", "court_pattern", "advanced"] as const).map((group) => <optgroup key={group} label={FOOTWORK_GROUP_LABELS[group][language]}>{FOOTWORK_CATALOG.filter((item) => item.group === group).map((item) => <option key={item.value} value={item.value}>{language === "vi" ? item.labelVi : item.labelEn}</option>)}</optgroup>)}</select>}
-        </label>
-        <label><span>{trainingModule === "footwork" ? copy.dominantSide : copy.hand}</span><select value={preferredHand} disabled={recording} onChange={(event) => setPreferredHand(event.target.value as PreferredHand)}><option value="auto">{copy.autoHand}</option><option value="right">{copy.right}</option><option value="left">{copy.left}</option></select></label>
-        <div className={styles.setupActions}>
-          {status !== "live" ? <button type="button" className={styles.secondaryButton} disabled={status === "loading"} onClick={() => void startCamera()}><Camera />{status === "loading" ? copy.opening : copy.openCamera}</button> : <button type="button" className={styles.secondaryButton} onClick={stopCamera}><Pause />{copy.stopCamera}</button>}
-          <button type="button" className={recording ? styles.stopButton : styles.primaryButton} disabled={status !== "live" || (!recording && targetStatus !== "locked")} onClick={toggleRecording}>{recording ? <Pause /> : <Play />}{recording ? copy.stopSet : copy.startSet}</button>
-          <button type="button" className={styles.ghostButton} onClick={loadDemo}><Sparkles />{copy.demo}</button>
-        </div>
-      </section>
 
-      <section className={styles.readiness} hidden={view !== "live"}>
-        <article className={status === "live" ? styles.ready : ""}><span>{status === "live" ? <Check /> : <Camera />}</span><div><small>{copy.camera}</small><strong>{status === "live" ? copy.cameraOn : copy.cameraOff}</strong></div></article>
-        <article className={athleteDetected ? styles.ready : ""}><span>{athleteDetected ? <UserRoundCheck /> : <CircleDashed />}</span><div><small>{copy.athlete}</small><strong>{athleteDetected && selectedTrackId !== null ? `${copy.athleteReady} · #${selectedTrackId}` : targetStatus === "lost" ? copy.targetLost : copy.athleteMissing}</strong></div></article>
-        <article className={workerStatus !== "checking" ? styles.ready : ""}><span>{workerStatus !== "checking" ? <Check /> : <CircleDashed />}</span><div><small>{copy.engine}</small><strong>{workerStatus !== "checking" ? copy.engineReady : "…"}</strong></div></article>
-        <article className={storageStatus !== "checking" ? styles.ready : ""}><span><History /></span><div><small>{copy.storage}</small><strong>{storageStatus === "indexeddb" ? "IndexedDB" : storageStatus === "localstorage" ? "Local" : "…"}</strong></div></article>
-      </section>
+          <section className={`${styles.readiness} ${styles.modalReadiness}`} aria-label={copy.engine}>
+            <article className={status === "live" ? styles.ready : ""}><span>{status === "live" ? <Check /> : <Camera />}</span><div><small>{copy.camera}</small><strong>{status === "live" ? copy.cameraOn : copy.cameraOff}</strong></div></article>
+            <article className={athleteDetected ? styles.ready : ""}><span>{athleteDetected ? <UserRoundCheck /> : <CircleDashed />}</span><div><small>{copy.athlete}</small><strong>{athleteDetected && selectedTrackId !== null ? `${copy.athleteReady} · #${selectedTrackId}` : targetStatus === "lost" ? copy.targetLost : copy.athleteMissing}</strong></div></article>
+            <article className={workerStatus !== "checking" ? styles.ready : ""}><span>{workerStatus !== "checking" ? <Check /> : <CircleDashed />}</span><div><small>{copy.engine}</small><strong>{workerStatus !== "checking" ? copy.engineReady : "…"}</strong></div></article>
+            <article className={storageStatus !== "checking" ? styles.ready : ""}><span><History /></span><div><small>{copy.storage}</small><strong>{storageStatus === "indexeddb" ? "IndexedDB" : storageStatus === "localstorage" ? "Local" : "…"}</strong></div></article>
+          </section>
 
-      <section className={styles.footworkCatalog} hidden={view !== "live" || trainingModule !== "footwork"}>
-        <header><div><span>{copy.footworkCatalog}</span><strong>{FOOTWORK_CATALOG.length - 1} skills</strong></div><p>{copy.catalogCopy}</p></header>
-        <div>{FOOTWORK_CATALOG.filter((item) => item.value !== "footwork_auto").map((item) => <button type="button" key={item.value} className={footworkMode === item.value ? styles.catalogActive : ""} disabled={recording} onClick={() => setFootworkMode(item.value)}><span>{item.short}</span><strong>{language === "vi" ? item.labelVi : item.labelEn}</strong><small>{FOOTWORK_GROUP_LABELS[item.group][language]}</small></button>)}</div>
-      </section>
+          <div className={styles.sessionSetupActions}>
+            <button type="button" className={styles.secondaryButton} disabled={status === "loading"} onClick={() => void startCamera()}><Camera />{status === "loading" ? copy.opening : copy.openCamera}</button>
+            <button type="button" className={styles.ghostButton} onClick={loadDemo}><Sparkles />{copy.demo}</button>
+          </div>
+        </section>
+      </div>, document.body) : null}
 
       <div className={styles.liveWorkspace} hidden={view !== "live"}>
         <div className={`${styles.cameraStage} ${focusMode ? styles.focusMode : ""}`}>
           <video ref={videoRef} playsInline muted />
-          <canvas ref={canvasRef} onPointerDown={selectAthleteFromCamera} />
+          <canvas
+            ref={canvasRef}
+            className={selectedTrackId === null ? styles.targetSelectionCanvas : styles.targetLockedCanvas}
+            onPointerDown={selectAthleteFromCamera}
+          />
+          {focusReticle && pendingTarget ? <span
+            key={focusReticle.token}
+            className={styles.focusReticle}
+            style={{ left: `${focusReticle.x}%`, top: `${focusReticle.y}%` }}
+            aria-hidden="true"
+          ><i /></span> : null}
           <div className={styles.cameraBadges}>
-            <span className={status === "live" ? styles.liveBadge : ""}><i />{status === "live" ? "LIVE" : "OFF"}</span>
+            <span className={status === "live" ? styles.liveBadge : ""}><i />{status === "live" ? systemCopy.live : systemCopy.off}</span>
             <span>{trainingModule === "stroke" ? TECHNIQUES.find((item) => item.value === mode)?.short : FOOTWORK_CATALOG.find((item) => item.value === footworkMode)?.short}</span>
-            <span>{preferredHand === "left" ? "LEFT" : preferredHand === "right" ? "RIGHT" : "AUTO HAND"}</span>
+            <span>{preferredHand === "left" ? copy.left.toUpperCase() : preferredHand === "right" ? copy.right.toUpperCase() : systemCopy.autoHandShort}</span>
+            {status === "live" ? <button
+              type="button"
+              className={`${styles.cameraOptionsButton} ${cameraSettingsOpen ? styles.cameraBadgeActive : ""}`}
+              disabled={recording}
+              onClick={() => setCameraSettingsOpen((current) => !current)}
+              aria-label={copy.cameraSettings}
+              aria-expanded={cameraSettingsOpen}
+            ><SlidersHorizontal /><span>{copy.options}</span></button> : null}
             <button type="button" onClick={() => setFocusMode((current) => !current)} aria-label={focusMode ? copy.exitFocus : copy.focus}>{focusMode ? <Minimize2 /> : <Maximize2 />}</button>
           </div>
-          {status === "live" ? <div className={styles.targetPicker} aria-live="polite">
+          {status === "live" && cameraSettingsOpen ? <div className={styles.cameraQuickSettings}>
+            <header>
+              <div><span>{copy.setup}</span><strong>{copy.cameraSettings}</strong></div>
+              <button type="button" onClick={() => setCameraSettingsOpen(false)} aria-label={copy.closeSettings}><X /></button>
+            </header>
+            <div className={styles.cameraModuleSwitch}>
+              <button type="button" className={trainingModule === "stroke" ? styles.cameraModuleActive : ""} onClick={() => switchTrainingModule("stroke")}><Target />{copy.strokeModule}</button>
+              <button type="button" className={trainingModule === "footwork" ? styles.cameraModuleActive : ""} onClick={() => switchTrainingModule("footwork")}><Footprints />{copy.footworkModule}</button>
+            </div>
+            <label><span>{trainingModule === "stroke" ? copy.technique : copy.footwork}</span>
+              {trainingModule === "stroke" ? <select value={mode} onChange={(event) => setMode(event.target.value as TechniqueMode)}>{TECHNIQUES.map((item) => <option key={item.value} value={item.value}>{techniqueLabel(item.value, language)}</option>)}</select> : <select value={footworkMode} onChange={(event) => setFootworkMode(event.target.value as FootworkMode)}>{(["foundation", "court_pattern", "advanced"] as const).map((group) => <optgroup key={group} label={FOOTWORK_GROUP_LABELS[group][language]}>{FOOTWORK_CATALOG.filter((item) => item.group === group).map((item) => <option key={item.value} value={item.value}>{catalogLabel(item.value, language)}</option>)}</optgroup>)}</select>}
+            </label>
+            <label><span>{trainingModule === "footwork" ? copy.dominantSide : copy.hand}</span><select value={preferredHand} onChange={(event) => setPreferredHand(event.target.value as PreferredHand)}><option value="auto">{copy.autoHand}</option><option value="right">{copy.right}</option><option value="left">{copy.left}</option></select></label>
+          </div> : null}
+          {status === "live" ? <div className={`${styles.targetPicker} ${!targetPickerExpanded ? styles.targetPickerCompact : ""}`} aria-live="polite">
             <div className={styles.targetSummary}>
               <span>{copy.targetLabel}</span>
               <strong>{targetStatus === "locked" && selectedTrackId !== null
                 ? `${copy.targetLocked} #${selectedTrackId}${selectedAthleteOption ? ` · ${shirtColorLabel(selectedAthleteOption.shirtColor, language)}` : ""}`
                 : targetStatus === "lost" ? copy.targetLost : copy.targetSelect}</strong>
-              <small>{visibleAthletes.length} {copy.detectedPeople} · {copy.targetGuide}</small>
+              <small>{selectedTrackId === null && targetPickerExpanded
+                ? `${visibleAthletes.length} ${copy.detectedPeople} · ${copy.targetGuide}`
+                : selectedAthleteOption
+                  ? positionLabel(selectedAthleteOption.position, language)
+                  : `${visibleAthletes.length} ${copy.detectedPeople}`}</small>
+              {(targetStatus === "locked" || targetStatus === "lost") && !recording ? <button
+                type="button"
+                className={styles.targetChange}
+                onClick={beginTargetChange}
+              >{copy.changeTarget}</button> : null}
             </div>
-            {visibleAthletes.length ? <div className={styles.targetButtons} aria-label={copy.targetLabel}>
+            {selectedTrackId === null && targetPickerExpanded && visibleAthletes.length ? <div className={styles.targetButtons} aria-label={copy.targetLabel}>
               {visibleAthletes.map((athlete) => <button
                 type="button"
                 key={athlete.trackId}
                 className={selectedTrackId === athlete.trackId ? styles.targetActive : ""}
                 disabled={recording}
-                onClick={() => selectAthlete(athlete.trackId)}
-                aria-label={`${language === "vi" ? "Khóa" : "Lock"} ${language === "vi" ? "VĐV" : "athlete"} ${athlete.trackId}, ${shirtColorLabel(athlete.shirtColor, language)}, ${positionLabel(athlete.position, language)}`}
+                onClick={() => requestAthleteSelection(athlete.trackId)}
+                aria-label={`${language === "vi" ? "Khóa VĐV" : language === "de" ? "Athleten fixieren" : "Lock athlete"} ${athlete.trackId}, ${shirtColorLabel(athlete.shirtColor, language)}, ${positionLabel(athlete.position, language)}`}
                 aria-pressed={selectedTrackId === athlete.trackId}
               >
                 <i
@@ -1407,14 +2051,64 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
                   aria-hidden="true"
                 />
                 <span className={styles.targetOptionCopy}>
-                  <strong>{language === "vi" ? "VĐV" : "Athlete"} {athlete.trackId}</strong>
+                  <strong>{language === "vi" ? "VĐV" : language === "de" ? "Athlet" : "Athlete"} {athlete.trackId}</strong>
                   <small>{shirtColorLabel(athlete.shirtColor, language)} · {positionLabel(athlete.position, language)}</small>
                 </span>
                 {selectedTrackId === athlete.trackId ? <Check aria-hidden="true" /> : null}
               </button>)}
             </div> : null}
           </div> : null}
+          {pendingTarget ? <div className={styles.targetConfirmBackdrop}>
+            <div
+              className={styles.targetConfirmDialog}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="target-confirm-title"
+            >
+              <span>{copy.targetLabel}</span>
+              <h3 id="target-confirm-title">{copy.confirmTargetTitle}</h3>
+              <p>{copy.confirmTargetCopy}</p>
+              <div className={styles.targetConfirmAthlete}>
+                <i
+                  className={styles.shirtSwatch}
+                  style={{ "--shirt-color": shirtColorCss(pendingTarget.shirtColor) } as CSSProperties}
+                  aria-hidden="true"
+                />
+                <div>
+                  <strong>{language === "vi" ? "VĐV" : language === "de" ? "Athlet" : "Athlete"} {pendingTarget.trackId}</strong>
+                  <small>{shirtColorLabel(pendingTarget.shirtColor, language)} · {positionLabel(pendingTarget.position, language)}</small>
+                </div>
+              </div>
+              <div className={styles.targetConfirmActions}>
+                <button type="button" onClick={cancelAthleteSelection}>{copy.chooseAgain}</button>
+                <button type="button" onClick={confirmAthleteSelection}><UserRoundCheck />{copy.confirmTarget}</button>
+              </div>
+            </div>
+          </div> : null}
           {status !== "live" ? <div className={styles.cameraEmpty}><span>{trainingModule === "footwork" ? <Footprints /> : <Activity />}</span><h3>{copy.cameraTitle}</h3><p>{trainingModule === "footwork" ? copy.footworkCameraCopy : copy.cameraCopy}</p><button type="button" onClick={() => void startCamera()} disabled={status === "loading"}><Camera />{status === "loading" ? copy.opening : copy.openCamera}</button></div> : null}
+          {status === "live" ? <div className={styles.cameraControls}>
+            <div className={styles.cameraControlGroup}>
+              <button
+                type="button"
+                className={`${styles.recordControl} ${recording ? styles.recordControlActive : ""}`}
+                disabled={!recording && targetStatus !== "locked"}
+                onClick={toggleRecording}
+                aria-label={recording ? copy.stopSet : copy.startSet}
+              ><span aria-hidden="true" /></button>
+              <small>{recording ? copy.stopSet : targetStatus === "locked" ? copy.startSet : copy.targetRequired}</small>
+            </div>
+            <div className={styles.cameraControlGroup}>
+              <button
+                type="button"
+                className={styles.cameraOffControl}
+                disabled={recording}
+                onClick={stopCamera}
+                aria-label={copy.stopCamera}
+                title={recording ? copy.stopSet : copy.stopCamera}
+              ><CameraOff aria-hidden="true" /></button>
+              <small>{copy.stopCamera}</small>
+            </div>
+          </div> : null}
           <div className={styles.liveEvent}><span>{recording ? copy.recording : copy.phase}</span><strong>{recording ? currentMessage : status === "live" ? trainingModule === "footwork" ? liveFootworkPhaseLabel(metrics, language) : livePhaseLabel(metrics.phase, language) : trainingModule === "footwork" ? copy.footworkWaiting : copy.liveWaiting}</strong></div>
           {recording ? <div className={styles.recordingPulse} aria-hidden="true" /> : null}
         </div>
@@ -1425,7 +2119,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
             {trainingModule === "footwork" ? <>
               <article><span>{copy.footSpeed}</span><strong>{metrics.footSpeed.toFixed(2)}<small>rel/s</small></strong><i style={{ "--metric": `${Math.min(100, metrics.footSpeed * 28)}%` } as CSSProperties} /></article>
               <article><span>{copy.centerSpeed}</span><strong>{metrics.centerSpeed.toFixed(2)}<small>rel/s</small></strong><i style={{ "--metric": `${Math.min(100, metrics.centerSpeed * 40)}%` } as CSSProperties} /></article>
-              <article><span>{copy.stance}</span><strong>{metrics.stanceWidth.toFixed(2)}<small>× thân</small></strong><i style={{ "--metric": `${Math.min(100, metrics.stanceWidth * 75)}%` } as CSSProperties} /></article>
+              <article><span>{copy.stance}</span><strong>{metrics.stanceWidth.toFixed(2)}<small>{systemCopy.bodyScaleUnit}</small></strong><i style={{ "--metric": `${Math.min(100, metrics.stanceWidth * 75)}%` } as CSSProperties} /></article>
               <article><span>{copy.knee}</span><strong>{Math.round(metrics.kneeFlexion)}<small>°</small></strong><i style={{ "--metric": `${Math.min(100, metrics.kneeFlexion * 1.6)}%` } as CSSProperties} /></article>
               <article><span>{copy.landing}</span><strong>{Math.round(metrics.landingSymmetry)}<small>%</small></strong><i style={{ "--metric": `${metrics.landingSymmetry}%` } as CSSProperties} /></article>
               <article><span>{copy.balance}</span><strong>{Math.round(metrics.balanceScore)}<small>%</small></strong><i style={{ "--metric": `${metrics.balanceScore}%` } as CSSProperties} /></article>
@@ -1445,7 +2139,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
           </div>
           <div className={styles.latestCard}>
             <span>{copy.latest}</span>
-            {latest ? <><strong>{latest.label} · {latest.overallScore}/100</strong><p>{latest.summary}</p><button type="button" onClick={() => onAskCoach(`${language === "vi" ? "Phân tích lần lặp" : "Analyze repetition"} ${latest.index}: ${latest.summary}`)}><MessageCircleMore />{copy.askCoach}</button></> : <p>{trainingModule === "footwork" ? copy.noFootworkReps : copy.noReps}</p>}
+            {latest ? <><strong>{latest.label} · {latest.overallScore}/100</strong><p>{latest.summary}</p><button type="button" onClick={() => onAskCoach(`${language === "vi" ? "Phân tích lần lặp" : language === "de" ? "Wiederholung analysieren" : "Analyze repetition"} ${latest.index}: ${latest.summary}`)}><MessageCircleMore />{copy.askCoach}</button></> : <p>{trainingModule === "footwork" ? copy.noFootworkReps : copy.noReps}</p>}
           </div>
           <p className={styles.privacyLine}><ShieldCheck />{copy.privacy}</p>
         </aside>
@@ -1456,36 +2150,36 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
       <div className={styles.reportWorkspace} hidden={view !== "sessions"}>
         <section className={styles.reportHero}>
           <div><span>{source === "demo" ? copy.demoNotice : copy.reportTitle}</span><h2>{activeSummary?.headline ?? copy.reportEmpty}</h2><p>{activeSummary?.insight ?? copy.reportEmptyCopy}</p></div>
-          <div className={styles.reportActions}><button type="button" className={styles.secondaryButton} onClick={() => { resetSet(); onNavigate("live"); }}><Camera />{copy.backLive}</button><button type="button" className={styles.primaryButton} disabled={!movements.length} onClick={() => onAskCoach(language === "vi" ? "Hãy phân tích toàn bộ set Motion Capture này và cho tôi 3 ưu tiên kỹ thuật cụ thể." : "Analyze this Motion Capture set and give me three concrete technique priorities.")}><MessageCircleMore />{copy.askCoach}</button></div>
+          <div className={styles.reportActions}><button type="button" className={styles.secondaryButton} onClick={() => { resetSet(); onNavigate("live"); }}><Camera />{copy.backLive}</button><button type="button" className={styles.primaryButton} disabled={!movements.length} onClick={() => onAskCoach(language === "vi" ? "Hãy phân tích toàn bộ set Motion Capture này và cho tôi 3 ưu tiên kỹ thuật cụ thể." : language === "de" ? "Analysiere diese Motion-Capture-Einheit und nenne mir drei konkrete Technikprioritäten." : "Analyze this Motion Capture session and give me three concrete technique priorities.")}><MessageCircleMore />{copy.askCoach}</button></div>
         </section>
 
         <section className={styles.scoreOverview}>
           <ScoreRing value={activeSummary?.averageScore ?? 0} label={copy.score} />
-          <article><span>{copy.reps}</span><strong>{movements.length}</strong><small>{trainingModule === "stroke" ? TECHNIQUES.find((item) => item.value === mode)?.label : footworkLabel(footworkMode, language)}</small></article>
-          <article><span>{copy.consistency}</span><strong>{activeSummary?.consistency ?? 0}<small>%</small></strong><small>{language === "vi" ? "so sánh giữa các lần lặp" : "across repetitions"}</small></article>
-          <article><span>{copy.capture}</span><strong>{averageCapture}<small>%</small></strong><small>{language === "vi" ? "độ rõ và toàn thân" : "visibility and full body"}</small></article>
+          <article><span>{copy.reps}</span><strong>{movements.length}</strong><small>{trainingModule === "stroke" ? techniqueLabel(mode, language) : footworkLabel(footworkMode, language)}</small></article>
+          <article><span>{copy.consistency}</span><strong>{activeSummary?.consistency ?? 0}<small>%</small></strong><small>{language === "vi" ? "so sánh giữa các lần lặp" : language === "de" ? "über alle Wiederholungen hinweg" : "across repetitions"}</small></article>
+          <article><span>{copy.capture}</span><strong>{averageCapture}<small>%</small></strong><small>{language === "vi" ? "độ rõ và toàn thân" : language === "de" ? "Sichtbarkeit und Ganzkörper" : "visibility and full body"}</small></article>
         </section>
 
         {profileMovement ? <div className={styles.reportGrid}>
           <section className={styles.profilePanel}>
-            <div className={styles.panelHeading}><div><span>{trainingModule === "footwork" ? language === "vi" ? "Hồ sơ bộ pháp" : "Footwork profile" : copy.profile}</span><strong>{profileMovement.label}</strong></div>{trainingModule === "footwork" ? <Footprints /> : <Target />}</div>
-            <div className={styles.profileBody}><TechniqueRadar movement={profileMovement} /><div className={styles.profileLegend}><span><i />{language === "vi" ? "Tư thế" : "Posture"}<strong>{profileMovement.postureScore}</strong></span><span><i />{language === "vi" ? "Nhịp" : "Rhythm"}<strong>{profileMovement.rhythmScore}</strong></span><span><i />{language === "vi" ? "Hồi vị" : "Recovery"}<strong>{profileMovement.recoveryScore}</strong></span><span><i />{copy.balance}<strong>{profileMovement.metrics.balance}</strong></span><span><i />{copy.capture}<strong>{profileMovement.captureQuality}</strong></span></div></div>
+            <div className={styles.panelHeading}><div><span>{trainingModule === "footwork" ? language === "vi" ? "Hồ sơ bộ pháp" : language === "de" ? "Beinarbeitsprofil" : "Footwork profile" : copy.profile}</span><strong>{profileMovement.label}</strong></div>{trainingModule === "footwork" ? <Footprints /> : <Target />}</div>
+            <div className={styles.profileBody}><TechniqueRadar movement={profileMovement} ariaLabel={systemCopy.techniqueChart} /><div className={styles.profileLegend}><span><i />{language === "vi" ? "Tư thế" : language === "de" ? "Haltung" : "Posture"}<strong>{profileMovement.postureScore}</strong></span><span><i />{language === "vi" ? "Nhịp" : language === "de" ? "Rhythmus" : "Rhythm"}<strong>{profileMovement.rhythmScore}</strong></span><span><i />{language === "vi" ? "Hồi vị" : language === "de" ? "Rückkehr" : "Recovery"}<strong>{profileMovement.recoveryScore}</strong></span><span><i />{copy.balance}<strong>{profileMovement.metrics.balance}</strong></span><span><i />{copy.capture}<strong>{profileMovement.captureQuality}</strong></span></div></div>
           </section>
 
           <section className={styles.phasePanel}>
-            <div className={styles.panelHeading}><div><span>{trainingModule === "footwork" ? language === "vi" ? "Chất lượng 4 pha" : "Four-phase quality" : copy.phaseQuality}</span><strong>{trainingModule === "footwork" ? language === "vi" ? "Chu kỳ bộ pháp BWF" : "BWF movement cycle" : language === "vi" ? "Chuỗi kỹ thuật hoàn chỉnh" : "Complete motion sequence"}</strong></div><TrendingUp /></div>
+            <div className={styles.panelHeading}><div><span>{trainingModule === "footwork" ? language === "vi" ? "Chất lượng 4 pha" : language === "de" ? "Qualität der vier Phasen" : "Four-phase quality" : copy.phaseQuality}</span><strong>{trainingModule === "footwork" ? language === "vi" ? "Chu kỳ bộ pháp BWF" : language === "de" ? "BWF-Bewegungszyklus" : "BWF movement cycle" : language === "vi" ? "Chuỗi kỹ thuật hoàn chỉnh" : language === "de" ? "Vollständiger Bewegungsablauf" : "Complete motion sequence"}</strong></div><TrendingUp /></div>
             <div className={styles.phaseList}>{profileMovement.phases.map((phase, index) => <article key={phase.phase} className={styles[phase.status]}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{phaseLabel(phase.phase, language)}</strong><i><b style={{ width: `${phase.score}%` }} /></i></div><em>{phase.score}</em></article>)}</div>
           </section>
 
           {trainingModule === "footwork" ? <section className={styles.footworkMetricsPanel}>
-            <div className={styles.panelHeading}><div><span>{language === "vi" ? "Dấu hiệu chân" : "Lower-body signals"}</span><strong>{language === "vi" ? "Đỉnh trong chu kỳ" : "Cycle peaks"}</strong></div><Gauge /></div>
+            <div className={styles.panelHeading}><div><span>{language === "vi" ? "Dấu hiệu chân" : language === "de" ? "Unterkörpersignale" : "Lower-body signals"}</span><strong>{language === "vi" ? "Đỉnh trong chu kỳ" : language === "de" ? "Spitzen im Zyklus" : "Cycle peaks"}</strong></div><Gauge /></div>
             <div>
               <article><span>{copy.footSpeed}</span><strong>{profileMovement.metrics.footSpeed?.toFixed(2) ?? "0.00"}<small> rel/s</small></strong></article>
               <article><span>{copy.centerSpeed}</span><strong>{profileMovement.metrics.centerSpeed?.toFixed(2) ?? "0.00"}<small> rel/s</small></strong></article>
               <article><span>{copy.stance}</span><strong>{profileMovement.metrics.stanceWidth?.toFixed(2) ?? "0.00"}<small> ×</small></strong></article>
               <article><span>{copy.landing}</span><strong>{profileMovement.metrics.landingSymmetry ?? 0}<small>%</small></strong></article>
-              <article><span>{language === "vi" ? "Biên độ dịch chuyển" : "Relative travel"}</span><strong>{profileMovement.metrics.travel?.toFixed(2) ?? "0.00"}<small> rel</small></strong></article>
-              <article><span>{language === "vi" ? "Luân phiên chân" : "Foot alternation"}</span><strong>{profileMovement.metrics.alternation ?? 0}<small>%</small></strong></article>
+              <article><span>{language === "vi" ? "Biên độ dịch chuyển" : language === "de" ? "Relativer Bewegungsumfang" : "Relative travel"}</span><strong>{profileMovement.metrics.travel?.toFixed(2) ?? "0.00"}<small> rel</small></strong></article>
+              <article><span>{language === "vi" ? "Luân phiên chân" : language === "de" ? "Fußwechsel" : "Foot alternation"}</span><strong>{profileMovement.metrics.alternation ?? 0}<small>%</small></strong></article>
             </div>
           </section> : null}
 
@@ -1495,13 +2189,13 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
           </section>
 
           <section className={styles.repetitionPanel}>
-            <div className={styles.panelHeading}><div><span>{copy.repetitions}</span><strong>{movements.length} {copy.reps.toLowerCase()}</strong></div><Dumbbell /></div>
-            <div className={styles.repetitionList}>{movements.slice().reverse().map((movement) => <article key={movement.index}><span>{String(movement.index).padStart(2, "0")}</span><div><strong>{movement.label}</strong><small>{movement.corrections[0] ?? movement.summary}</small></div><div><strong>{movement.overallScore}</strong><small>{movement.captureQuality}% {language === "vi" ? "khung" : "capture"}</small></div><button type="button" onClick={() => onAskCoach(`${language === "vi" ? "Giải thích lần lặp" : "Explain repetition"} ${movement.index}: ${movement.summary}`)} aria-label={copy.askCoach}><MessageCircleMore /></button></article>)}</div>
+            <div className={styles.panelHeading}><div><span>{copy.repetitions}</span><strong>{movements.length} {language === "de" ? copy.reps : copy.reps.toLowerCase()}</strong></div><Dumbbell /></div>
+            <div className={styles.repetitionList}>{movements.slice().reverse().map((movement) => <article key={movement.index}><span>{String(movement.index).padStart(2, "0")}</span><div><strong>{movement.label}</strong><small>{movement.corrections[0] ?? movement.summary}</small></div><div><strong>{movement.overallScore}</strong><small>{movement.captureQuality}% {language === "vi" ? "khung hình" : language === "de" ? "Erfassung" : "capture"}</small></div><button type="button" onClick={() => onAskCoach(`${language === "vi" ? "Giải thích lần lặp" : language === "de" ? "Wiederholung erklären" : "Explain repetition"} ${movement.index}: ${movement.summary}`)} aria-label={copy.askCoach}><MessageCircleMore /></button></article>)}</div>
           </section>
 
           <section className={styles.historyPanel}>
             <div className={styles.panelHeading}><div><span>{copy.recent}</span><strong>{history.length}/12</strong></div><History /></div>
-            <div className={styles.historyList}>{history.length ? history.map((session) => <button type="button" key={session.id} onClick={() => loadHistory(session)}><span><strong>{session.summary.headline}</strong><small>{dateFormatter.format(new Date(session.createdAt))}</small></span><ChevronRight /></button>) : <p>{copy.noHistory}</p>}</div>
+            <div className={styles.historyList}>{localizedHistory.length ? localizedHistory.map((session) => <button type="button" key={session.id} onClick={() => loadHistory(session)}><span><strong>{session.summary.headline}</strong><small>{dateFormatter.format(new Date(session.createdAt))}</small></span><ChevronRight /></button>) : <p>{copy.noHistory}</p>}</div>
           </section>
         </div> : null}
 
@@ -1511,13 +2205,13 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
       <section className={styles.diagnostics} hidden={view !== "settings"}>
         <div><span>{copy.diagnostics}</span><h2>{copy.diagnostics}</h2><p>{copy.diagnosticsCopy}</p></div>
         <div className={styles.diagnosticGrid}>
-          <article><Activity /><span><small>Pose model</small><strong>MediaPipe Pose Lite · 4 poses</strong><em>{workerStatus === "ready" ? "Web Worker · target lock" : "Main thread fallback · target lock"}</em></span></article>
-          <article><Armchair /><span><small>Motion features</small><strong>3D joints + temporal window</strong><em>6-phase assessment</em></span></article>
-          <article><Footprints /><span><small>Footwork engine</small><strong>Hips + knees + ankles</strong><em>BWF 4-phase movement cycle</em></span></article>
-          <article><Hand /><span><small>Racket hand</small><strong>{preferredHand === "auto" ? copy.autoHand : preferredHand === "right" ? copy.right : copy.left}</strong><em>Locked per set</em></span></article>
-          <article><ShieldCheck /><span><small>Privacy</small><strong>On-device video</strong><em>Only reduced metrics reach AI Coach</em></span></article>
+          <article><Activity /><span><small>{systemCopy.poseModel}</small><strong>{systemCopy.poseModelDetail}</strong><em>{workerStatus === "ready" ? systemCopy.workerReady : systemCopy.workerFallback}</em></span></article>
+          <article><Armchair /><span><small>{systemCopy.motionFeatures}</small><strong>{systemCopy.motionFeaturesDetail}</strong><em>{systemCopy.sixPhaseAssessment}</em></span></article>
+          <article><Footprints /><span><small>{systemCopy.footworkEngine}</small><strong>{systemCopy.footworkEngineDetail}</strong><em>{systemCopy.fourPhaseCycle}</em></span></article>
+          <article><Hand /><span><small>{systemCopy.racketHand}</small><strong>{preferredHand === "auto" ? copy.autoHand : preferredHand === "right" ? copy.right : copy.left}</strong><em>{systemCopy.lockedPerSession}</em></span></article>
+          <article><ShieldCheck /><span><small>{systemCopy.privacy}</small><strong>{systemCopy.onDeviceVideo}</strong><em>{systemCopy.reducedMetricsOnly}</em></span></article>
         </div>
-        <button type="button" className={styles.secondaryButton} onClick={() => { resetSet(); setMetrics(initialMetrics); }}><RotateCcw />{language === "vi" ? "Xóa set đang hiển thị" : "Clear current set"}</button>
+        <button type="button" className={styles.secondaryButton} onClick={() => { resetSet(); setMetrics(initialMetrics); }}><RotateCcw />{language === "vi" ? "Xóa set đang hiển thị" : language === "de" ? "Aktuelles Set löschen" : "Clear current set"}</button>
       </section>
     </section>
   );

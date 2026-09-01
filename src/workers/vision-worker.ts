@@ -105,7 +105,7 @@ self.onmessage = async (event: MessageEvent<VisionWorkerIncoming>) => {
     respond({
       type: "motionResult",
       requestId: event.data.requestId,
-      result: assessMotionWindow(event.data.samples, event.data.mode, event.data.dominantSide),
+      result: assessMotionWindow(event.data.samples, event.data.mode, event.data.dominantSide, event.data.language),
     });
     return;
   }
@@ -113,7 +113,7 @@ self.onmessage = async (event: MessageEvent<VisionWorkerIncoming>) => {
     respond({
       type: "footworkResult",
       requestId: event.data.requestId,
-      result: assessFootworkWindow(event.data.samples, event.data.mode, event.data.dominantSide),
+      result: assessFootworkWindow(event.data.samples, event.data.mode, event.data.dominantSide, event.data.language),
     });
     return;
   }

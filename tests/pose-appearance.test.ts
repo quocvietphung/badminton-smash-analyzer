@@ -1,11 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  appearanceIdentityConflict,
   appearanceDistance,
   extractTorsoAppearance,
   horizontalPosition,
 } from "../src/lib/pose-appearance.ts";
+import type { PoseAppearance, ShirtColor } from "../src/lib/pose-appearance.ts";
 import type { PoseLandmark } from "../src/lib/pose-metrics.ts";
+
+function appearance(bin: number, shirtColor: ShirtColor): PoseAppearance {
+  const histogram = Array.from({ length: 21 }, () => 0);
+  histogram[bin] = 1;
+  return { histogram, shirtColor, confidence: 0.9, sampleCount: 120 };
+}
 
 function landmarks(): PoseLandmark[] {
   const points = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, visibility: 1 }));
@@ -52,4 +60,11 @@ test("describes horizontal target position", () => {
   assert.equal(horizontalPosition(0.2), "left");
   assert.equal(horizontalPosition(0.5), "center");
   assert.equal(horizontalPosition(0.8), "right");
+});
+
+test("does not reject a sole athlete only because lighting changes shirt color", () => {
+  const red = appearance(0, "red");
+  const blue = appearance(11, "blue");
+  assert.equal(appearanceIdentityConflict(red, blue, []), false);
+  assert.equal(appearanceIdentityConflict(red, blue, [red]), true);
 });

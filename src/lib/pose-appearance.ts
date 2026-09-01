@@ -129,6 +129,23 @@ export function appearanceDistance(left: PoseAppearance, right: PoseAppearance) 
   return Math.sqrt(Math.max(0, 1 - Math.min(1, overlap)));
 }
 
+export function appearanceIdentityConflict(
+  selected: PoseAppearance,
+  current: PoseAppearance,
+  alternatives: PoseAppearance[],
+) {
+  const knownColorMismatch = selected.shirtColor !== "unknown"
+    && current.shirtColor !== "unknown"
+    && selected.shirtColor !== current.shirtColor
+    && selected.confidence >= 0.4
+    && current.confidence >= 0.4;
+  if (!knownColorMismatch || alternatives.length === 0) return false;
+  const currentDistance = appearanceDistance(selected, current);
+  if (currentDistance <= 0.68) return false;
+  return alternatives.some((candidate) =>
+    appearanceDistance(selected, candidate) + 0.18 < currentDistance);
+}
+
 export function blendAppearance(
   previous: PoseAppearance | undefined,
   current: PoseAppearance | undefined,
@@ -141,7 +158,13 @@ export function blendAppearance(
   return appearanceFromHistogram(histogram, Math.max(previous.sampleCount, current.sampleCount));
 }
 
-export function horizontalPosition(centerX: number): HorizontalPosition {
+export function horizontalPosition(
+  centerX: number,
+  previous?: HorizontalPosition,
+): HorizontalPosition {
+  if (previous === "left" && centerX < 0.44) return "left";
+  if (previous === "right" && centerX > 0.56) return "right";
+  if (previous === "center" && centerX >= 0.32 && centerX <= 0.68) return "center";
   if (centerX < 0.37) return "left";
   if (centerX > 0.63) return "right";
   return "center";

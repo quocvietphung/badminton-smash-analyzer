@@ -21,7 +21,7 @@ export const BADMINTON_KNOWLEDGE: KnowledgeChunk[] = [
     tags: ["motion capture", "pose", "bằng chứng", "điểm chuyển động", "accuracy", "camera"],
     content:
       "SmashLab quan sát chuỗi mốc cơ thể, góc khớp, nhịp tăng tốc, độ duỗi và khả năng trở lại cân bằng. Evidence là mức đủ dữ liệu của chuỗi pose; overallScore là điểm nội bộ theo tiêu chí chuyển động. Cả hai đều không phải accuracy hay điểm chính thức của BWF.",
-    source: { title: "Phạm vi đo của SmashLab Motion Capture", publisher: "SmashLab" },
+    source: { title: "SmashLab Motion Capture Measurement Scope", publisher: "SmashLab" },
   },
   {
     id: "motion-limitations",
@@ -30,7 +30,7 @@ export const BADMINTON_KNOWLEDGE: KnowledgeChunk[] = [
     tags: ["quả cầu", "vợt", "km h", "tiếp xúc", "quỹ đạo", "điểm rơi", "giới hạn"],
     content:
       "Mốc cơ thể không cho biết chính xác mặt vợt, thời điểm vợt chạm cầu, tốc độ cầu, quỹ đạo hoặc điểm rơi. Vì vậy hệ thống chỉ chấm hình thái chuyển động; Clear, Drop, Drive và Backhand được đánh giá theo bài tập người dùng đã chọn, không xác nhận kết quả đường cầu.",
-    source: { title: "Phạm vi đo của SmashLab Motion Capture", publisher: "SmashLab" },
+    source: { title: "SmashLab Motion Capture Measurement Scope", publisher: "SmashLab" },
   },
   {
     id: "bwf-hitting-cycle",

@@ -33,3 +33,15 @@ test("retrieves relative measurement limits for footwork", () => {
   const results = retrieveKnowledge("Tốc độ chân và khoảng cách bộ pháp có phải mét thật không?");
   assert.ok(results.some((result) => result.id === "footwork-measurement-limit"));
 });
+
+test("retrieves footwork knowledge for a German coaching question", () => {
+  const results = retrieveKnowledge("Wie verbessere ich Beinarbeit, Ausfallschritt, Landung und Rückkehr?");
+  assert.ok(results.slice(0, 2).some((result) => result.id === "bwf-footwork-components"));
+});
+
+test("localizes retrieval metadata for English and German prompts", () => {
+  const results = retrieveKnowledge("smash trunk rotation and recovery", 1);
+  assert.match(formatKnowledgeContext(results, "en"), /Exact source title:/);
+  assert.match(formatKnowledgeContext(results, "de"), /Exakter Quellentitel:/);
+  assert.match(formatKnowledgeContext([], "de"), /kein passender Wissensabschnitt/i);
+});

@@ -7,52 +7,49 @@ import type {
   MotionPhaseScore,
 } from "./motion-technique.ts";
 import type { DominantSide } from "./pose-metrics.ts";
+import type { StudioLanguage } from "./studio-types.ts";
 
 export type FootworkCatalogItem = {
   value: FootworkMode;
   group: "foundation" | "court_pattern" | "advanced";
   labelVi: string;
   labelEn: string;
+  labelDe: string;
   short: string;
 };
 
 export const FOOTWORK_CATALOG: FootworkCatalogItem[] = [
-  { value: "footwork_auto", group: "foundation", labelVi: "Tự nhận bộ pháp", labelEn: "Auto detect footwork", short: "AUTO" },
-  { value: "split_step", group: "foundation", labelVi: "Split step / bước tách", labelEn: "Split step", short: "SS" },
-  { value: "running_step", group: "foundation", labelVi: "Running step / bước chạy", labelEn: "Running step", short: "RUN" },
-  { value: "chasse", group: "foundation", labelVi: "Chassé / bước đuổi", labelEn: "Chassé", short: "CH" },
-  { value: "cross_behind", group: "foundation", labelVi: "Cross-behind / bắt chéo sau", labelEn: "Cross-behind", short: "XB" },
-  { value: "hop_pivot", group: "foundation", labelVi: "Hop & pivot / nhảy xoay", labelEn: "Hop & pivot", short: "HP" },
-  { value: "lunge", group: "foundation", labelVi: "Lunge / bước chùng", labelEn: "Lunge", short: "LG" },
-  { value: "jump_landing", group: "foundation", labelVi: "Jump & landing / nhảy tiếp đất", labelEn: "Jump & landing", short: "JL" },
-  { value: "forehand_forecourt", group: "court_pattern", labelVi: "Tiến trước thuận tay", labelEn: "Forehand forecourt", short: "FF" },
-  { value: "backhand_forecourt", group: "court_pattern", labelVi: "Tiến trước trái tay", labelEn: "Backhand forecourt", short: "BF" },
-  { value: "forehand_rearcourt", group: "court_pattern", labelVi: "Lùi cuối sân thuận tay", labelEn: "Forehand rearcourt", short: "FR" },
-  { value: "backhand_rearcourt", group: "court_pattern", labelVi: "Lùi cuối sân trái tay", labelEn: "Backhand rearcourt", short: "BR" },
-  { value: "recovery_to_base", group: "court_pattern", labelVi: "Hồi vị về tư thế nền", labelEn: "Recovery to base", short: "RC" },
-  { value: "six_corner_shadow", group: "court_pattern", labelVi: "Shadow 6 góc", labelEn: "Six-corner shadow", short: "6C" },
-  { value: "scissor_jump", group: "advanced", labelVi: "Scissor jump / bật đổi chân", labelEn: "Scissor jump", short: "SJ" },
-  { value: "china_jump", group: "advanced", labelVi: "China jump / bật ngang", labelEn: "China jump", short: "CJ" },
+  { value: "footwork_auto", group: "foundation", labelVi: "Tự nhận bộ pháp", labelEn: "Auto detect footwork", labelDe: "Beinarbeit automatisch erkennen", short: "AUTO" },
+  { value: "split_step", group: "foundation", labelVi: "Split step / bước tách", labelEn: "Split step", labelDe: "Split Step", short: "SS" },
+  { value: "running_step", group: "foundation", labelVi: "Running step / bước chạy", labelEn: "Running step", labelDe: "Laufschritt", short: "RUN" },
+  { value: "chasse", group: "foundation", labelVi: "Chassé / bước đuổi", labelEn: "Chassé", labelDe: "Chassé-Schritt", short: "CH" },
+  { value: "cross_behind", group: "foundation", labelVi: "Cross-behind / bước chéo sau", labelEn: "Cross-behind step", labelDe: "Kreuzschritt nach hinten", short: "XB" },
+  { value: "hop_pivot", group: "foundation", labelVi: "Hop & pivot / bật và xoay", labelEn: "Hop and pivot", labelDe: "Hüpf- und Drehschritt", short: "HP" },
+  { value: "lunge", group: "foundation", labelVi: "Lunge / bước chùng", labelEn: "Lunge", labelDe: "Ausfallschritt", short: "LG" },
+  { value: "jump_landing", group: "foundation", labelVi: "Jump & landing / bật nhảy và tiếp đất", labelEn: "Jump and landing", labelDe: "Sprung und Landung", short: "JL" },
+  { value: "forehand_forecourt", group: "court_pattern", labelVi: "Di chuyển lên trước thuận tay", labelEn: "Forehand forecourt movement", labelDe: "Vorhandbewegung ins Vorderfeld", short: "FF" },
+  { value: "backhand_forecourt", group: "court_pattern", labelVi: "Di chuyển lên trước trái tay", labelEn: "Backhand forecourt movement", labelDe: "Rückhandbewegung ins Vorderfeld", short: "BF" },
+  { value: "forehand_rearcourt", group: "court_pattern", labelVi: "Di chuyển cuối sân thuận tay", labelEn: "Forehand rearcourt movement", labelDe: "Vorhandbewegung ins Hinterfeld", short: "FR" },
+  { value: "backhand_rearcourt", group: "court_pattern", labelVi: "Di chuyển cuối sân trái tay", labelEn: "Backhand rearcourt movement", labelDe: "Rückhandbewegung ins Hinterfeld", short: "BR" },
+  { value: "recovery_to_base", group: "court_pattern", labelVi: "Hồi vị về vị trí cơ bản", labelEn: "Recovery to base position", labelDe: "Rückkehr zur Grundposition", short: "RC" },
+  { value: "six_corner_shadow", group: "court_pattern", labelVi: "Shadow footwork 6 góc", labelEn: "Six-corner shadow footwork", labelDe: "Sechs-Ecken-Schattenlauf", short: "6C" },
+  { value: "scissor_jump", group: "advanced", labelVi: "Scissor jump / bật đổi chân", labelEn: "Scissor jump", labelDe: "Umsprung", short: "SJ" },
+  { value: "china_jump", group: "advanced", labelVi: "China jump / bật ngang", labelEn: "China jump", labelDe: "Chinasprung", short: "CJ" },
 ];
 
-const LABELS = new Map<FootworkTechnique, string>([
-  ["split_step", "Split step"],
-  ["running_step", "Running step"],
-  ["chasse", "Chassé"],
-  ["cross_behind", "Cross-behind"],
-  ["hop_pivot", "Hop & pivot"],
-  ["lunge", "Lunge"],
-  ["jump_landing", "Jump & landing"],
-  ["scissor_jump", "Scissor jump"],
-  ["china_jump", "China jump"],
-  ["forehand_forecourt", "Forehand forecourt"],
-  ["backhand_forecourt", "Backhand forecourt"],
-  ["forehand_rearcourt", "Forehand rearcourt"],
-  ["backhand_rearcourt", "Backhand rearcourt"],
-  ["recovery_to_base", "Recovery to base"],
-  ["six_corner_shadow", "Six-corner shadow"],
-  ["footwork_unknown", "Bộ pháp chưa rõ"],
-]);
+const UNKNOWN_LABELS: Record<StudioLanguage, string> = {
+  vi: "Bộ pháp chưa rõ",
+  en: "Unclassified footwork",
+  de: "Nicht eindeutig klassifizierte Beinarbeit",
+};
+
+function labelForTechnique(technique: FootworkTechnique, language: StudioLanguage) {
+  if (technique === "footwork_unknown") return UNKNOWN_LABELS[language];
+  const item = FOOTWORK_CATALOG.find((entry) => entry.value === technique);
+  if (language === "vi") return item?.labelVi ?? UNKNOWN_LABELS.vi;
+  if (language === "de") return item?.labelDe ?? UNKNOWN_LABELS.de;
+  return item?.labelEn ?? UNKNOWN_LABELS.en;
+}
 
 const clamp = (value: number, min = 0, max = 1) => Math.min(max, Math.max(min, value));
 const mean = (values: number[]) => values.length
@@ -182,10 +179,102 @@ function skillScore(skill: FootworkTechnique, values: {
   return general;
 }
 
+const FOOTWORK_FEEDBACK = {
+  vi: {
+    startStrength: "Pha xuất phát có tải gối và mở trụ rõ.",
+    approachStrength: "Nhịp chân tạo được chuyển động tiếp cận rõ ràng.",
+    hitStrength: "Hình thái chân phù hợp với bài tập bộ pháp đã chọn.",
+    recoveryStrength: "Kết thúc cân bằng và có xu hướng trở lại vị trí ban đầu.",
+    baselineStrength: "Đã ghi nhận đủ chuỗi chân để bắt đầu so sánh các lần lặp.",
+    startCorrection: "Hạ trọng tâm và tạo split step rõ trước khi di chuyển.",
+    approachCorrection: "Giữ nhịp chân ngắn, liên tục và tránh đứng thẳng khi đang tiếp cận.",
+    lungeCorrection: "Tăng độ dài bước chùng nhưng giữ gối và thân trong trạng thái kiểm soát.",
+    jumpCorrection: "Tiếp đất mềm hơn, phân bố tải đều và giữ thân ở giữa hai chân.",
+    hitCorrection: "Làm rõ hình thái chân của bài tập đã chọn và giữ thân cân bằng khi đổi hướng.",
+    recoveryCorrection: "Đẩy khỏi chân trụ sớm hơn và hoàn tất hồi vị trước lần lặp tiếp theo.",
+    captureCorrection: "Đặt máy ngang hông, thấy rõ cả hai bàn chân và chừa khoảng di chuyển quanh VĐV.",
+    maintain: "Duy trì nhịp hiện tại.",
+    summary: (label: string, score: number, priority: string) => `${label}: ${score}/100 chất lượng chuyển động. Ưu tiên: ${priority}`,
+  },
+  en: {
+    startStrength: "The start phase shows clear knee loading and stance preparation.",
+    approachStrength: "The foot rhythm creates a distinct approach movement.",
+    hitStrength: "Lower-body form matches the selected footwork drill.",
+    recoveryStrength: "The movement finishes in balance and returns toward the starting position.",
+    baselineStrength: "The lower-body sequence is complete enough to compare repetitions.",
+    startCorrection: "Lower the center of mass and use a distinct split step before moving.",
+    approachCorrection: "Keep the steps short and continuous; avoid standing upright during the approach.",
+    lungeCorrection: "Increase lunge length while keeping the knee and trunk under control.",
+    jumpCorrection: "Land more softly, distribute the load evenly and keep the trunk centered between the feet.",
+    hitCorrection: "Make the selected footwork pattern more distinct and stay balanced when changing direction.",
+    recoveryCorrection: "Push off the support leg earlier and complete recovery before the next repetition.",
+    captureCorrection: "Place the phone at hip height, keep both feet visible and leave enough movement space around the athlete.",
+    maintain: "Maintain the current rhythm.",
+    summary: (label: string, score: number, priority: string) => `${label}: ${score}/100 motion quality. Priority: ${priority}`,
+  },
+  de: {
+    startStrength: "In der Startphase sind Kniebelastung und Vorbereitung des Stands klar erkennbar.",
+    approachStrength: "Der Laufrhythmus erzeugt eine deutlich erkennbare Annäherungsbewegung.",
+    hitStrength: "Die Beinstellung passt zur gewählten Lauftechnikübung.",
+    recoveryStrength: "Die Bewegung endet ausbalanciert und führt zurück in Richtung Ausgangsposition.",
+    baselineStrength: "Der Bewegungsablauf der Beine ist vollständig genug, um Wiederholungen zu vergleichen.",
+    startCorrection: "Senke den Körperschwerpunkt und nutze vor der Bewegung einen klaren Split Step.",
+    approachCorrection: "Halte die Schritte kurz und flüssig; richte dich während der Annäherung nicht vollständig auf.",
+    lungeCorrection: "Vergrößere den Ausfallschritt und halte dabei Knie und Rumpf kontrolliert.",
+    jumpCorrection: "Lande weicher, verteile die Belastung gleichmäßig und halte den Rumpf mittig zwischen den Füßen.",
+    hitCorrection: "Führe das gewählte Lauftechnikmuster deutlicher aus und bleibe beim Richtungswechsel ausbalanciert.",
+    recoveryCorrection: "Drücke dich früher vom Stützbein ab und schließe die Rückkehr vor der nächsten Wiederholung ab.",
+    captureCorrection: "Platziere das Smartphone auf Hüfthöhe, halte beide Füße sichtbar und lasse ausreichend Bewegungsraum um die Person.",
+    maintain: "Behalte den aktuellen Rhythmus bei.",
+    summary: (label: string, score: number, priority: string) => `${label}: ${score}/100 Bewegungsqualität. Priorität: ${priority}`,
+  },
+} as const;
+
+export function localizeFootworkAssessment(
+  assessment: MotionAssessment,
+  language: StudioLanguage,
+): MotionAssessment {
+  if (assessment.module !== "footwork") return assessment;
+  const copy = FOOTWORK_FEEDBACK[language];
+  const scoreFor = (phase: MotionPhase) => assessment.phases.find((entry) => entry.phase === phase)?.score ?? 0;
+  const start = scoreFor("start");
+  const approach = scoreFor("approach");
+  const hitBalance = scoreFor("hit_balance");
+  const recovery = scoreFor("recovery");
+  const technique = assessment.technique as FootworkTechnique;
+  const label = labelForTechnique(technique, language);
+  const strengths: string[] = [];
+  const corrections: string[] = [];
+
+  if (start >= 72) strengths.push(copy.startStrength);
+  if (approach >= 72) strengths.push(copy.approachStrength);
+  if (hitBalance >= 72) strengths.push(copy.hitStrength);
+  if (recovery >= 72) strengths.push(copy.recoveryStrength);
+  if (!strengths.length) strengths.push(copy.baselineStrength);
+  if (start < 58) corrections.push(copy.startCorrection);
+  if (approach < 60) corrections.push(copy.approachCorrection);
+  if (hitBalance < 60) corrections.push(technique === "lunge"
+    ? copy.lungeCorrection
+    : technique === "jump_landing" || technique === "scissor_jump" || technique === "china_jump"
+      ? copy.jumpCorrection
+      : copy.hitCorrection);
+  if (recovery < 62) corrections.push(copy.recoveryCorrection);
+  if (assessment.captureQuality < 64) corrections.unshift(copy.captureCorrection);
+
+  return {
+    ...assessment,
+    label,
+    strengths: strengths.slice(0, 3),
+    corrections: corrections.slice(0, 4),
+    summary: copy.summary(label, assessment.overallScore, corrections[0] ?? copy.maintain),
+  };
+}
+
 export function assessFootworkWindow(
   rawSamples: PoseLiteSample[],
   mode: FootworkMode,
   dominantSide: DominantSide,
+  language: StudioLanguage = "vi",
 ): MotionAssessment {
   const samples = resamplePoseWindow(rawSamples, 40);
   const opening = samples.slice(0, Math.max(2, Math.ceil(samples.length * 0.24)));
@@ -253,27 +342,10 @@ export function assessFootworkWindow(
   const evidence = Math.min(82, Math.round(captureQuality * 0.58
     + clamp(samples.length / 16) * 22 + clamp(Math.max(footSpeed, centerSpeed)) * 20));
 
-  const strengths: string[] = [];
-  const corrections: string[] = [];
-  if (start.score >= 72) strengths.push("Bước khởi động có tải gối và mở trụ rõ.");
-  if (approach.score >= 72) strengths.push("Nhịp chân tạo được chuyển động tiếp cận rõ ràng.");
-  if (hitBalance.score >= 72) strengths.push("Hình thái chân phù hợp với bộ pháp đã chọn.");
-  if (recovery.score >= 72) strengths.push("Kết thúc cân bằng và có xu hướng trở lại vị trí ban đầu.");
-  if (!strengths.length) strengths.push("Đã ghi nhận đủ chuỗi chân để bắt đầu so sánh các lần lặp.");
-  if (start.score < 58) corrections.push("Hạ trọng tâm và tạo bước tách rõ trước khi di chuyển.");
-  if (approach.score < 60) corrections.push("Giữ nhịp chân ngắn, liên tục và tránh đứng thẳng khi đang tiếp cận.");
-  if (hitBalance.score < 60) corrections.push(technique === "lunge"
-    ? "Tăng độ dài bước chùng nhưng giữ gối và thân trong trạng thái kiểm soát."
-    : technique === "jump_landing" || technique === "scissor_jump" || technique === "china_jump"
-      ? "Tiếp đất mềm hơn, phân bố tải đều và giữ thân nằm giữa hai chân."
-      : "Làm rõ hình thái chân của bài tập đã chọn và giữ thân cân bằng khi đổi hướng.");
-  if (recovery.score < 62) corrections.push("Đẩy khỏi chân trụ sớm hơn và hoàn tất hồi vị trước lần lặp tiếp theo.");
-  if (captureQuality < 64) corrections.unshift("Đặt máy ngang hông, thấy rõ cả hai bàn chân và chừa khoảng di chuyển quanh VĐV.");
-
-  return {
+  return localizeFootworkAssessment({
     module: "footwork",
     technique,
-    label: LABELS.get(technique) ?? "Bộ pháp",
+    label: "",
     evidence,
     overallScore,
     postureScore,
@@ -302,8 +374,8 @@ export function assessFootworkWindow(
       verticalBounce: Number(peakBounceRaw.toFixed(2)),
       alternation: Math.round(alternation * 100),
     },
-    strengths: strengths.slice(0, 3),
-    corrections: corrections.slice(0, 4),
-    summary: `${LABELS.get(technique) ?? "Bộ pháp"}: ${overallScore}/100 chất lượng chuyển động, ưu tiên ${corrections[0]?.toLowerCase() ?? "duy trì nhịp hiện tại"}`,
-  };
+    strengths: [],
+    corrections: [],
+    summary: "",
+  }, language);
 }

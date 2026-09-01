@@ -47,7 +47,7 @@ test("uses selected backhand drill context and cross-body motion", () => {
     lateralReach: 82,
   }), "backhand", "left");
   assert.equal(result.technique, "backhand");
-  assert.equal(result.label, "Backhand");
+  assert.equal(result.label, "Backhand / trái tay");
   assert.ok(result.phases.find((phase) => phase.phase === "contact_zone")!.score >= 55);
 });
 
@@ -62,4 +62,16 @@ test("motion score is independent from shuttle speed or trajectory", () => {
   assert.equal("speedKmh" in result, false);
   assert.equal("trajectory" in result, false);
   assert.equal(result.technique, "clear");
+});
+
+test("localizes dynamic motion feedback in English and German", () => {
+  const english = assessMotionWindow(createSwing(), "smash", "right", "en");
+  const german = assessMotionWindow(createSwing(), "backhand", "right", "de");
+
+  assert.equal(english.label, "Smash");
+  assert.match(english.summary, /motion quality/i);
+  assert.ok(english.corrections.every((item) => !/[à-ỹ]/i.test(item)));
+  assert.equal(german.label, "Rückhand");
+  assert.match(german.summary, /Bewegungsqualität/);
+  assert.ok(german.strengths.some((item) => /Bewegungsablauf|Ausholphase|Schlagarm|Treffzone|Gleichgewicht/.test(item)));
 });

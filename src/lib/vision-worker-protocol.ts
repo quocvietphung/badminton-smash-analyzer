@@ -7,14 +7,15 @@ import type {
 import type { FootworkMode, MotionAssessment, TechniqueMode } from "./motion-technique";
 import type { DominantSide } from "./pose-metrics";
 import type { PoseAppearance } from "./pose-appearance";
+import type { StudioLanguage } from "./studio-types";
 
 export type VisionWorkerIncoming =
   | { type: "ping" }
   | { type: "initialize"; wasmUrl: string; modelUrl: string }
   | { type: "detect"; requestId: string; frame: ImageBitmap; timestamp: number }
   | { type: "analyze"; requestId: string; samples: PoseLiteSample[]; drillMode: DrillMode }
-  | { type: "analyzeMotion"; requestId: string; samples: PoseLiteSample[]; mode: TechniqueMode; dominantSide: DominantSide }
-  | { type: "analyzeFootwork"; requestId: string; samples: PoseLiteSample[]; mode: FootworkMode; dominantSide: DominantSide }
+  | { type: "analyzeMotion"; requestId: string; samples: PoseLiteSample[]; mode: TechniqueMode; dominantSide: DominantSide; language: StudioLanguage }
+  | { type: "analyzeFootwork"; requestId: string; samples: PoseLiteSample[]; mode: FootworkMode; dominantSide: DominantSide; language: StudioLanguage }
   | { type: "close" };
 
 export type VisionWorkerPose = {

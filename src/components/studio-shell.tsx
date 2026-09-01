@@ -28,7 +28,7 @@ import type {
 import styles from "./studio-shell.module.css";
 
 const VIEW_VALUES = new Set<StudioView>(["live", "sessions", "coach", "settings"]);
-const PREFERENCE_KEY = "smashlab-studio-preferences-v1";
+const PREFERENCE_KEY = "smashlab-studio-preferences-v2";
 const ONBOARDING_KEY = "smashlab-onboarding-v2";
 
 const COPY = {
@@ -108,6 +108,44 @@ const COPY = {
     next: "Continue",
     start: "Enter Studio",
   },
+  de: {
+    nav: { live: "Live", sessions: "Berichte", coach: "AI Coach", settings: "Einstellungen" },
+    privacy: "Video bleibt auf deinem Gerät",
+    eyebrow: "Badminton Motion Capture direkt auf dem Gerät",
+    title: "Verstehe jede Bewegung.",
+    titleAccent: "Verfeinere jede Technik.",
+    intro: "Öffne die Kamera, wähle Schlagtechnik oder Beinarbeit und erhalte Feedback zum Bewegungsablauf. Videobilder verlassen dein Gerät nicht.",
+    heroPrimary: "Live-Training starten",
+    heroSecondary: "Beispieldaten ansehen",
+    sessionsEyebrow: "Performance Studio",
+    sessionsTitle: "Trainingsberichte",
+    sessionsCopy: "Prüfe Schlagtechnik, Beinarbeitszyklen, Gelenkwinkel, Bewegungsrhythmus und Verbesserungsprioritäten jeder Wiederholung.",
+    coachEyebrow: "SmashLab Intelligence",
+    coachTitle: "Ein Coach, der deine Einheit versteht",
+    coachCopy: "Stelle Fragen zu den aktuellen Motion-Capture-Daten und nutze eine belegte Wissensbasis für das Training.",
+    settingsEyebrow: "Gerät & Erlebnis",
+    settingsTitle: "Studio-Einstellungen",
+    settingsCopy: "Passe die Oberfläche an und prüfe die Analysefunktionen auf deinem Gerät.",
+    appearance: "Darstellung",
+    appearanceCopy: "Wähle den passenden Modus für helle oder dunkle Trainingsräume.",
+    dark: "Studio dunkel",
+    light: "Training hell",
+    language: "Sprache",
+    languageCopy: "Ändere die Sprache der Oberfläche, ohne Trainingsdaten zu verändern.",
+    onboarding: "Schnellstart",
+    onboardingCopy: "Zeige die dreistufige Anleitung für Aufbau und Analyse erneut an.",
+    replay: "Anleitung öffnen",
+    footer: "Motion Capture läuft auf dem Gerät · Azure AI erhält nur reduzierte Bewegungsdaten",
+    steps: [
+      { kicker: "01 · Position", title: "Eine Person vollständig von Kopf bis Fuß erfassen", body: "Platziere das Smartphone etwa auf Hüfthöhe in 3–5 m Entfernung, stabil und ohne Gegenlicht." },
+      { kicker: "02 · Auswahl", title: "Schlagtechnik oder Beinarbeit wählen", body: "Trainiere Smash oder Backhand oder wechsle zu Beinarbeit für Split Step, Chassé, Ausfallschritt, Sprünge und Rückkehr." },
+      { kicker: "03 · Aufnahme", title: "Vollständige Wiederholungen ausführen", body: "Jede Wiederholung sollte Vorbereitung, Annäherung, Stütz- oder Schlagphase und eine ausbalancierte Rückkehr enthalten." },
+    ],
+    skip: "Überspringen",
+    back: "Zurück",
+    next: "Weiter",
+    start: "Studio öffnen",
+  },
 } as const;
 
 const NAV_ITEMS: Array<{ view: StudioView; icon: typeof Activity }> = [
@@ -120,7 +158,7 @@ const NAV_ITEMS: Array<{ view: StudioView; icon: typeof Activity }> = [
 export default function StudioShell() {
   const [view, setView] = useState<StudioView>("live");
   const [theme, setTheme] = useState<StudioTheme>("dark");
-  const [language, setLanguage] = useState<StudioLanguage>("vi");
+  const [language, setLanguage] = useState<StudioLanguage>("en");
   const [preferencesReady, setPreferencesReady] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
@@ -140,7 +178,7 @@ export default function StudioShell() {
           language?: StudioLanguage;
         };
         if (stored.theme === "dark" || stored.theme === "light") setTheme(stored.theme);
-        if (stored.language === "vi" || stored.language === "en") setLanguage(stored.language);
+        if (stored.language === "vi" || stored.language === "en" || stored.language === "de") setLanguage(stored.language);
         if (!window.localStorage.getItem(ONBOARDING_KEY)) setOnboardingOpen(true);
       } catch {
         setOnboardingOpen(true);
@@ -226,7 +264,7 @@ export default function StudioShell() {
           <span className={styles.brandText}><strong>SmashLab</strong><span>MOTION SCIENCE STUDIO</span></span>
         </button>
 
-        <nav className={styles.desktopNav} aria-label={language === "vi" ? "Điều hướng chính" : "Main navigation"}>
+        <nav className={styles.desktopNav} aria-label={language === "vi" ? "Điều hướng chính" : language === "de" ? "Hauptnavigation" : "Main navigation"}>
           {NAV_ITEMS.map(({ view: itemView, icon: Icon }) => (
             <button
               type="button"
@@ -295,8 +333,9 @@ export default function StudioShell() {
               <span className={styles.preferenceIcon}><Languages /></span>
               <div><strong>{copy.language}</strong><p>{copy.languageCopy}</p></div>
               <div className={styles.segmented}>
-                <button type="button" className={language === "vi" ? styles.segmentActive : ""} onClick={() => setLanguage("vi")}>VI</button>
                 <button type="button" className={language === "en" ? styles.segmentActive : ""} onClick={() => setLanguage("en")}>EN</button>
+                <button type="button" className={language === "de" ? styles.segmentActive : ""} onClick={() => setLanguage("de")}>DE</button>
+                <button type="button" className={language === "vi" ? styles.segmentActive : ""} onClick={() => setLanguage("vi")}>VI</button>
               </div>
             </article>
             <article className={styles.preferenceCard}>
@@ -321,7 +360,7 @@ export default function StudioShell() {
         <footer className={styles.footer}><ShieldCheck /><span>{copy.footer}</span></footer>
       </main>
 
-      <nav className={styles.mobileNav} aria-label={language === "vi" ? "Điều hướng ứng dụng" : "App navigation"}>
+      <nav className={styles.mobileNav} aria-label={language === "vi" ? "Điều hướng ứng dụng" : language === "de" ? "App-Navigation" : "App navigation"}>
         {NAV_ITEMS.map(({ view: itemView, icon: Icon }) => (
           <button
             type="button"

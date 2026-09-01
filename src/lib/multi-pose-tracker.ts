@@ -59,6 +59,7 @@ type Assignment = { trackIndex: number; detectionIndex: number; cost: number };
 const TRACK_TTL_MS = 1_100;
 const MAX_MATCH_COST = 2.8;
 const UNMATCHED_TRACK_COST = 1.55;
+const UNMATCHED_DETECTION_COST = 1.35;
 const LANDMARKS_FOR_BOUNDS = [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
 
 export function createMultiPoseTrackerState(): MultiPoseTrackerState {
@@ -160,8 +161,11 @@ function bestAssignments(tracks: TrackMemory[], detections: DetectionDescriptor[
   function visit(trackIndex: number, used: Set<number>, assignments: Assignment[], score: number) {
     if (score >= bestScore) return;
     if (trackIndex >= tracks.length) {
+      const unmatchedDetections = detections.length - used.size;
+      const finalScore = score + unmatchedDetections * UNMATCHED_DETECTION_COST;
+      if (finalScore >= bestScore) return;
       best = assignments;
-      bestScore = score;
+      bestScore = finalScore;
       return;
     }
 

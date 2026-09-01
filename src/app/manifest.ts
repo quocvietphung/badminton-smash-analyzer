@@ -4,7 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "SmashLab Motion Science Studio",
     short_name: "SmashLab",
-    description: "Phân tích kỹ thuật vợt và bộ pháp cầu lông bằng Motion Capture ngay trên thiết bị.",
+    description: "On-device badminton racket-technique and footwork analysis powered by Motion Capture.",
     start_url: "/",
     display: "standalone",
     background_color: "#071012",

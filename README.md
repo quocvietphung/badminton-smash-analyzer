@@ -37,6 +37,20 @@ Ask questions about the current training data and get practical explanations fro
 - Offer English, Vietnamese, and German UI copy, plus dark and light training themes.
 - Provide an optional Azure OpenAI Coach route with rate limiting and retrieval-grounded badminton references.
 
+## AI and computer vision technology
+
+SmashLab combines local computer vision with a focused generative-AI layer. Each part has a different responsibility:
+
+- **MediaPipe Pose Landmarker Lite** detects full-body landmarks directly in the browser. Optional world landmarks provide a more stable 3D-aware signal when the device supports them.
+- **On-device motion analysis** converts landmark sequences into joint angles, body extension, trunk rotation, balance, rhythm, footwork travel, and recovery signals. This keeps raw camera frames local and makes the core analysis fast enough for a phone.
+- **Multi-athlete tracking** follows up to four people using pose position, velocity, body scale, and torso appearance. The user confirms the target athlete before a set is scored, reducing accidental identity switches.
+- **Rule-based motion classification** groups movement sequences into racket-technique and footwork drills. The classifier is intentionally evidence-aware: it can report insufficient evidence instead of claiming to see shuttle contact, racket-face angle, or flight trajectory.
+- **Web Worker processing** moves pose inference and sequence evaluation off the main UI thread when the browser supports it, keeping the Studio responsive during live capture.
+- **Retrieval-augmented generation (RAG)** selects relevant badminton coaching references before the AI Coach answers. This gives the assistant a constrained knowledge context instead of relying only on a general language model.
+- **Azure OpenAI GPT-4.1 mini** turns reduced session metrics into practical coaching explanations, priorities, and practice suggestions. The model receives structured analysis data and text questions, not video frames.
+
+This hybrid design uses deterministic computer-vision logic for measurable movement signals and generative AI for explanation. It keeps the safety-critical product boundaries visible: the AI Coach explains movement evidence, while it does not invent shuttle speed, contact timing, or trajectory data.
+
 ## Important scope
 
 SmashLab analyses body movement form. It does **not** detect the racket face or shuttle, confirm contact timing, calculate official speed in km/h, reconstruct shuttle trajectory, or replace a qualified coach. Scores are internal training signals, not BWF ratings or scientific accuracy claims. Measurements such as foot speed and centre-of-mass speed are normalised relative values because the camera is not calibrated to a court.

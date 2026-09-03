@@ -20,6 +20,9 @@ export type PoseLiteSample = {
   wristAboveShoulder: boolean;
   visibility: number;
   trunkRotation?: number;
+  trunkAngularSpeed?: number;
+  elbowExtensionSpeed?: number;
+  worldTracking?: boolean;
   kneeFlexion?: number;
   handLocked?: boolean;
   balanceScore?: number;
@@ -117,6 +120,9 @@ export function resamplePoseWindow(samples: PoseLiteSample[], intervalMs = 40) {
       wristAboveShoulder: nearest.wristAboveShoulder,
       visibility: interpolate(left.visibility, right.visibility, ratio),
       trunkRotation: interpolate(left.trunkRotation, right.trunkRotation, ratio),
+      trunkAngularSpeed: interpolate(left.trunkAngularSpeed, right.trunkAngularSpeed, ratio),
+      elbowExtensionSpeed: interpolate(left.elbowExtensionSpeed, right.elbowExtensionSpeed, ratio),
+      worldTracking: nearest.worldTracking,
       kneeFlexion: interpolate(left.kneeFlexion, right.kneeFlexion, ratio),
       handLocked: nearest.handLocked,
       balanceScore: interpolate(left.balanceScore, right.balanceScore, ratio),

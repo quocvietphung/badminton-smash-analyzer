@@ -42,7 +42,7 @@ Ask questions about the current training data and get practical explanations fro
 SmashLab combines local computer vision with a focused generative-AI layer. Each part has a different responsibility:
 
 - **MediaPipe Pose Landmarker Lite** detects full-body landmarks directly in the browser. Optional world landmarks provide a more stable 3D-aware signal when the device supports them.
-- **On-device motion analysis** converts landmark sequences into joint angles, body extension, trunk rotation, balance, rhythm, footwork travel, and recovery signals. This keeps raw camera frames local and makes the core analysis fast enough for a phone.
+- **On-device motion analysis** converts landmark sequences into joint angles, body extension, balance, rhythm, footwork travel, and recovery signals. When MediaPipe world landmarks are available, the stroke pipeline estimates 3D shoulder–hip separation and checks whether lower-body loading, trunk rotation, elbow extension, and wrist acceleration occur in a plausible proximal-to-distal order. These are camera-derived biomechanics proxies rather than laboratory measurements.
 - **Multi-athlete target lock** follows up to four people with a lightweight MOT pipeline inspired by SORT, ByteTrack, and OC-SORT. It combines Kalman motion prediction, observation-direction consistency, two-stage confidence association, body scale, and a bounded torso-appearance gallery. After an occlusion, observation-centric re-updates correct stale velocity before tracking continues. A target must remain stable across multiple frames before it can be locked, and ambiguous recovery pauses scoring rather than silently switching athletes. This is not face recognition.
 - **Rule-based motion classification** groups movement sequences into racket-technique and footwork drills. The classifier is intentionally evidence-aware: it can report insufficient evidence instead of claiming to see shuttle contact, racket-face angle, or flight trajectory.
 - **Web Worker processing** moves pose inference and sequence evaluation off the main UI thread when the browser supports it, keeping the Studio responsive during live capture.
@@ -129,6 +129,8 @@ SmashLab is a standard Next.js App Router application and can be deployed direct
 4. Deploy and open the generated HTTPS URL so browsers can grant camera permission.
 
 Video inference runs in the browser, so Vercel only serves the application and handles the optional AI Coach Route Handler. No Python service, GPU instance, or cloud video pipeline is required.
+
+The computer-vision and biomechanics calculations do not consume Vercel Functions or GPU time. This architecture remains suitable for a Vercel Hobby deployment because pose inference, target tracking, kinetic-sequence scoring, and local session storage all run on the athlete's device.
 
 ## Architecture at a glance
 

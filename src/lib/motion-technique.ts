@@ -64,6 +64,9 @@ export type MotionPeakMetrics = {
   bodyExtension: number;
   wristSpeed: number;
   armAngularSpeed: number;
+  trunkAngularSpeed?: number;
+  elbowExtensionSpeed?: number;
+  kineticSequence?: number;
   balance: number;
   footSpeed?: number;
   centerSpeed?: number;
@@ -85,6 +88,9 @@ export type MotionAssessment = {
   recoveryScore: number;
   captureQuality: number;
   intensity: number;
+  biomechanicsScore?: number;
+  kineticSequenceScore?: number;
+  worldTrackingRatio?: number;
   dominantSide: DominantSide;
   durationMs: number;
   phases: MotionPhaseScore[];
@@ -128,12 +134,14 @@ const FEEDBACK = {
   vi: {
     loadingStrength: "Pha kéo vợt có xoay thân và tạo tải rõ.",
     accelerationStrength: "Nhịp tăng tốc tay rõ trước vùng tiếp xúc.",
+    sequenceStrength: "Chuỗi truyền lực chân → thân → khuỷu → cổ tay diễn ra đúng thứ tự.",
     contactStrength: "Tư thế vùng tiếp xúc phù hợp với bài tập đã chọn.",
     recoveryStrength: "Giữ thăng bằng và giảm tốc tốt sau động tác.",
     baselineStrength: "Đã ghi nhận đủ chuỗi chuyển động để bắt đầu so sánh các lần lặp.",
     readyCorrection: "Ổn định tư thế sẵn sàng và giữ toàn thân trong khung hình.",
     loadingCorrection: "Chuẩn bị sớm hơn: xoay thân và tạo tải chân trước khi tăng tốc tay.",
     accelerationCorrection: "Tách rõ pha kéo vợt và pha tăng tốc, tránh vung đều từ đầu đến cuối.",
+    sequenceCorrection: "Khởi phát lực từ chân và thân trước, sau đó mới duỗi khuỷu và tăng tốc cổ tay.",
     backhandCorrection: "Đưa khuỷu và mặt ngoài cẳng tay vào vị trí sớm hơn, giữ động tác gọn trước thân.",
     driveCorrection: "Giữ động tác gọn, đưa vùng tiếp xúc ra trước thân và hạn chế biên độ thừa.",
     overheadCorrection: "Vươn cao hơn và hoàn tất duỗi khuỷu ở vùng tiếp xúc.",
@@ -147,12 +155,14 @@ const FEEDBACK = {
   en: {
     loadingStrength: "The loading phase shows clear trunk rotation and lower-body loading.",
     accelerationStrength: "The racket arm accelerates clearly before the contact zone.",
+    sequenceStrength: "The leg → trunk → elbow → wrist kinetic sequence is well ordered.",
     contactStrength: "Contact-zone posture matches the selected drill.",
     recoveryStrength: "Balance and deceleration are well controlled after the stroke.",
     baselineStrength: "The motion sequence is complete enough to compare repetitions.",
     readyCorrection: "Stabilize the ready position and keep the full body in frame.",
     loadingCorrection: "Prepare earlier: rotate the trunk and load the legs before accelerating the arm.",
     accelerationCorrection: "Separate loading from acceleration more clearly; avoid swinging at one constant speed.",
+    sequenceCorrection: "Initiate from the legs and trunk before extending the elbow and accelerating the wrist.",
     backhandCorrection: "Position the elbow and outer forearm earlier, keeping the action compact and in front of the body.",
     driveCorrection: "Keep the action compact, move the contact zone in front of the body and reduce unnecessary backswing.",
     overheadCorrection: "Reach higher and complete elbow extension through the contact zone.",
@@ -166,12 +176,14 @@ const FEEDBACK = {
   de: {
     loadingStrength: "In der Ausholphase sind Rumpfrotation und Belastungsaufbau klar erkennbar.",
     accelerationStrength: "Der Schlagarm beschleunigt deutlich vor der Treffzone.",
+    sequenceStrength: "Die Bewegungskette Bein → Rumpf → Ellbogen → Handgelenk ist gut abgestimmt.",
     contactStrength: "Die Körperposition in der Treffzone passt zur gewählten Übung.",
     recoveryStrength: "Gleichgewicht und Abbremsen sind nach dem Schlag gut kontrolliert.",
     baselineStrength: "Der Bewegungsablauf ist vollständig genug, um Wiederholungen zu vergleichen.",
     readyCorrection: "Stabilisiere die Bereitschaftsposition und bleibe vollständig im Bild.",
     loadingCorrection: "Bereite früher vor: Rotiere den Rumpf und belaste die Beine, bevor der Schlagarm beschleunigt.",
     accelerationCorrection: "Trenne Aushol- und Beschleunigungsphase deutlicher; vermeide eine gleichförmige Schlagbewegung.",
+    sequenceCorrection: "Leite die Kraft zuerst aus Beinen und Rumpf ein, dann strecke den Ellbogen und beschleunige das Handgelenk.",
     backhandCorrection: "Bringe Ellbogen und Außenseite des Unterarms früher in Position und halte die Bewegung kompakt vor dem Körper.",
     driveCorrection: "Halte die Bewegung kompakt, verlagere die Treffzone vor den Körper und reduziere unnötiges Ausholen.",
     overheadCorrection: "Strecke dich höher und führe die Ellbogenstreckung durch die Treffzone zu Ende.",
@@ -209,6 +221,59 @@ function phaseScore(phase: MotionPhase, rawScore: number): MotionPhaseScore {
   };
 }
 
+function peakSampleIndex(
+  samples: PoseLiteSample[],
+  valueFor: (sample: PoseLiteSample) => number,
+  endExclusive = samples.length,
+) {
+  const limit = Math.max(1, Math.min(samples.length, endExclusive));
+  let bestIndex = 0;
+  for (let index = 1; index < limit; index += 1) {
+    if (valueFor(samples[index]) > valueFor(samples[bestIndex])) bestIndex = index;
+  }
+  return bestIndex;
+}
+
+function leadTimingScore(samples: PoseLiteSample[], leaderIndex: number, followerIndex: number) {
+  const gapMs = samples[followerIndex].timestamp - samples[leaderIndex].timestamp;
+  if (gapMs < -40 || gapMs > 360) return 0;
+  return clamp(1 - Math.abs(gapMs - 80) / 280);
+}
+
+function assessKineticSequence(samples: PoseLiteSample[], wristPeakIndex: number) {
+  const trunkPeak = percentile(samples.map((sample) => sample.trunkAngularSpeed ?? 0), 0.9);
+  const elbowPeak = percentile(samples.map((sample) => sample.elbowExtensionSpeed ?? 0), 0.9);
+  const available = trunkPeak >= 12 && elbowPeak >= 24;
+  if (!available) return { available: false, score: 0.55, trunkPeak, elbowPeak };
+
+  const kneePeakIndex = peakSampleIndex(
+    samples,
+    (sample) => sample.kneeFlexion ?? 0,
+    Math.max(1, wristPeakIndex + 1),
+  );
+  const trunkPeakIndex = peakSampleIndex(
+    samples,
+    (sample) => sample.trunkAngularSpeed ?? 0,
+    Math.max(1, wristPeakIndex + 2),
+  );
+  const elbowPeakIndex = peakSampleIndex(
+    samples,
+    (sample) => sample.elbowExtensionSpeed ?? 0,
+    Math.max(1, wristPeakIndex + 2),
+  );
+  const lowerBodyLead = leadTimingScore(samples, kneePeakIndex, trunkPeakIndex);
+  const trunkToElbow = leadTimingScore(samples, trunkPeakIndex, elbowPeakIndex);
+  const elbowToWrist = leadTimingScore(samples, elbowPeakIndex, wristPeakIndex);
+  const signalStrength = clamp(trunkPeak / 180) * 0.45 + clamp(elbowPeak / 420) * 0.55;
+  return {
+    available: true,
+    score: clamp(lowerBodyLead * 0.25 + trunkToElbow * 0.4
+      + elbowToWrist * 0.25 + signalStrength * 0.1),
+    trunkPeak,
+    elbowPeak,
+  };
+}
+
 function inferTechnique(samples: PoseLiteSample[]): MotionTechnique {
   const result = classifyPoseWindow(samples, { drillMode: "open" });
   return result.strokeType;
@@ -234,12 +299,17 @@ export function localizeMotionAssessment(
 
   if (loading >= 72) strengths.push(copy.loadingStrength);
   if (acceleration >= 72) strengths.push(copy.accelerationStrength);
+  if (technique === "smash" && (assessment.kineticSequenceScore ?? 0) >= 72) {
+    strengths.push(copy.sequenceStrength);
+  }
   if (contact >= 72) strengths.push(copy.contactStrength);
   if (recovery >= 72) strengths.push(copy.recoveryStrength);
   if (!strengths.length) strengths.push(copy.baselineStrength);
   if (ready < 58) corrections.push(copy.readyCorrection);
   if (loading < 60) corrections.push(copy.loadingCorrection);
   if (acceleration < 60) corrections.push(copy.accelerationCorrection);
+  if (technique === "smash" && assessment.kineticSequenceScore !== undefined
+    && assessment.kineticSequenceScore < 55) corrections.push(copy.sequenceCorrection);
   if (contact < 60) corrections.push(technique === "backhand"
     ? copy.backhandCorrection
     : technique === "drive"
@@ -311,11 +381,13 @@ export function assessMotionWindow(
     (best, sample, index) => sample.wristSpeed > samples[best].wristSpeed ? index : best,
     0,
   );
+  const kineticSequence = assessKineticSequence(samples, peakIndex);
   const beforePeak = samples.slice(0, Math.max(2, peakIndex));
   const opening = samples.slice(0, Math.max(2, Math.ceil(samples.length * 0.25)));
   const closing = samples.slice(Math.max(0, Math.floor(samples.length * 0.72)));
   const visibleRatio = mean(samples.map((sample) => clamp(sample.visibility / 100)));
   const lockedRatio = mean(samples.map((sample) => sample.handLocked === false ? 0 : 1));
+  const worldTrackingRatio = mean(samples.map((sample) => sample.worldTracking ? 1 : 0));
 
   const peakWrist = percentile(samples.map((sample) => sample.wristSpeed), 0.9);
   const peakAngular = percentile(samples.map((sample) => sample.armAngularSpeed), 0.9);
@@ -355,8 +427,10 @@ export function assessMotionWindow(
   const loading = phaseScore("loading", rotation * 0.34 + kneeLoad * 0.24
     + clamp(1 - averageField(beforePeak, "elbowAngle") / 185) * 0.16
     + visibleRatio * 0.16 + stance * 0.1);
-  const acceleration = phaseScore("acceleration", accelerationContrast * 0.42
-    + speed * 0.25 + angular * 0.23 + visibleRatio * 0.1);
+  const acceleration = phaseScore("acceleration", kineticSequence.available
+    ? accelerationContrast * 0.35 + speed * 0.22 + angular * 0.19
+      + kineticSequence.score * 0.14 + visibleRatio * 0.1
+    : accelerationContrast * 0.42 + speed * 0.25 + angular * 0.23 + visibleRatio * 0.1);
   const contact = phaseScore("contact_zone", techniqueContactScore(technique, {
     overhead,
     height,
@@ -377,16 +451,25 @@ export function assessMotionWindow(
 
   const postureScore = Math.round((loading.score * 0.23 + contact.score * 0.47
     + follow.score * 0.3));
-  const rhythmScore = Math.round(clamp(temporalShape * 0.72
-    + clamp(durationMs / 420) * 0.12 + compact * 0.16) * 100);
+  const rhythmScore = Math.round(clamp(kineticSequence.available
+    ? temporalShape * 0.57 + kineticSequence.score * 0.25
+      + clamp(durationMs / 420) * 0.08 + compact * 0.1
+    : temporalShape * 0.72 + clamp(durationMs / 420) * 0.12 + compact * 0.16) * 100);
   const recoveryScore = recovery.score;
   const intensity = Math.round(clamp(speed * 0.48 + angular * 0.34 + extension * 0.18) * 100);
-  const captureQuality = Math.round(clamp(visibleRatio * 0.72 + lockedRatio * 0.18
-    + clamp(samples.length / 14) * 0.1) * 100);
+  const geometryReliability = worldTrackingRatio > 0 ? worldTrackingRatio : 0.5;
+  const captureQuality = Math.round(clamp(visibleRatio * 0.67 + lockedRatio * 0.18
+    + clamp(samples.length / 14) * 0.1 + geometryReliability * 0.05) * 100);
   const overallScore = Math.round(postureScore * 0.44 + rhythmScore * 0.24
     + recoveryScore * 0.2 + ready.score * 0.12);
-  const evidence = Math.min(82, Math.round(captureQuality * 0.53
-    + temporalShape * 100 * 0.31 + clamp(samples.length / 16) * 100 * 0.16));
+  const biomechanicsScore = Math.round(clamp(
+    loading.score / 100 * 0.2 + acceleration.score / 100 * 0.22
+      + contact.score / 100 * 0.3 + follow.score / 100 * 0.12
+      + kineticSequence.score * 0.16,
+  ) * 100);
+  const evidence = Math.min(82, Math.round(captureQuality * 0.47
+    + temporalShape * 100 * 0.25 + clamp(samples.length / 16) * 100 * 0.14
+    + geometryReliability * 100 * 0.07 + kineticSequence.score * 100 * 0.07));
 
   return localizeMotionAssessment({
     module: "stroke",
@@ -399,6 +482,11 @@ export function assessMotionWindow(
     recoveryScore,
     captureQuality,
     intensity,
+    biomechanicsScore,
+    ...(kineticSequence.available
+      ? { kineticSequenceScore: Math.round(kineticSequence.score * 100) }
+      : {}),
+    worldTrackingRatio: Math.round(worldTrackingRatio * 100),
     dominantSide,
     durationMs,
     phases,
@@ -411,6 +499,11 @@ export function assessMotionWindow(
       bodyExtension: Math.round(peakExtension),
       wristSpeed: Number(peakWrist.toFixed(2)),
       armAngularSpeed: Math.round(peakAngular),
+      trunkAngularSpeed: Math.round(kineticSequence.trunkPeak),
+      elbowExtensionSpeed: Math.round(kineticSequence.elbowPeak),
+      ...(kineticSequence.available
+        ? { kineticSequence: Math.round(kineticSequence.score * 100) }
+        : {}),
       balance: Math.round(averageBalance),
     },
     strengths: [],

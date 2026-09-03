@@ -41,6 +41,7 @@ Keep the response concise, clear and actionable. Draw conclusions only from body
 Mandatory rules:
 - "evidence" measures how complete the pose sequence is; it is not accuracy or classification probability.
 - "overallScore" is an internal movement-quality score, not an official BWF score.
+- "biomechanicsScore" and "kineticSequenceScore" are camera-derived body-motion proxies, not laboratory measurements or expert-rating probabilities.
 - For footwork, analyze only hip, knee and ankle motion, foot rhythm, planting, landing and recovery within the Start–Approach–Hit–Recovery cycle.
 - Without court calibration, travel, footSpeed and centerSpeed are body-relative values, not metres or m/s.
 - Motion Capture does not see the shuttle, racket face or actual contact quality.

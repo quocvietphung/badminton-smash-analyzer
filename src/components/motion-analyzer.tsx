@@ -1655,6 +1655,9 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
       handLocked: analysis.metrics.handLocked,
       balanceScore: analysis.metrics.balanceScore,
       stanceWidth: analysis.metrics.stanceWidth,
+      trunkAngularSpeed: analysis.metrics.trunkAngularSpeed,
+      elbowExtensionSpeed: analysis.metrics.elbowExtensionSpeed,
+      worldTracking: analysis.metrics.worldTracking,
       wristAcrossBody: analysis.metrics.wristAcrossBody,
       lateralReach: analysis.metrics.lateralReach,
       leftKneeFlexion: analysis.metrics.leftKneeFlexion,
@@ -2313,7 +2316,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
         {profileMovement ? <div className={styles.reportGrid}>
           <section className={styles.profilePanel}>
             <div className={styles.panelHeading}><div><span>{trainingModule === "footwork" ? language === "vi" ? "Hồ sơ bộ pháp" : language === "de" ? "Beinarbeitsprofil" : "Footwork profile" : copy.profile}</span><strong>{profileMovement.label}</strong></div>{trainingModule === "footwork" ? <Footprints /> : <Target />}</div>
-            <div className={styles.profileBody}><TechniqueRadar movement={profileMovement} ariaLabel={systemCopy.techniqueChart} /><div className={styles.profileLegend}><span><i />{language === "vi" ? "Tư thế" : language === "de" ? "Haltung" : "Posture"}<strong>{profileMovement.postureScore}</strong></span><span><i />{language === "vi" ? "Nhịp" : language === "de" ? "Rhythmus" : "Rhythm"}<strong>{profileMovement.rhythmScore}</strong></span><span><i />{language === "vi" ? "Hồi vị" : language === "de" ? "Rückkehr" : "Recovery"}<strong>{profileMovement.recoveryScore}</strong></span><span><i />{copy.balance}<strong>{profileMovement.metrics.balance}</strong></span><span><i />{copy.capture}<strong>{profileMovement.captureQuality}</strong></span></div></div>
+            <div className={styles.profileBody}><TechniqueRadar movement={profileMovement} ariaLabel={systemCopy.techniqueChart} /><div className={styles.profileLegend}><span><i />{language === "vi" ? "Tư thế" : language === "de" ? "Haltung" : "Posture"}<strong>{profileMovement.postureScore}</strong></span><span><i />{language === "vi" ? "Nhịp" : language === "de" ? "Rhythmus" : "Rhythm"}<strong>{profileMovement.rhythmScore}</strong></span><span><i />{language === "vi" ? "Hồi vị" : language === "de" ? "Rückkehr" : "Recovery"}<strong>{profileMovement.recoveryScore}</strong></span><span><i />{copy.balance}<strong>{profileMovement.metrics.balance}</strong></span>{trainingModule === "stroke" && profileMovement.biomechanicsScore !== undefined ? <span><i />{language === "vi" ? "Cơ sinh học" : language === "de" ? "Biomechanik" : "Biomechanics"}<strong>{profileMovement.biomechanicsScore}</strong></span> : null}<span><i />{copy.capture}<strong>{profileMovement.captureQuality}</strong></span></div></div>
           </section>
 
           <section className={styles.phasePanel}>

@@ -8,6 +8,8 @@ function createSwing(overrides: Partial<PoseLiteSample> = {}): PoseLiteSample[] 
     const progress = index / 17;
     const peak = Math.exp(-((progress - 0.56) ** 2) / 0.017);
     const loading = Math.exp(-((progress - 0.32) ** 2) / 0.045);
+    const trunkVelocity = Math.exp(-((progress - 0.38) ** 2) / 0.012);
+    const elbowExtension = Math.exp(-((progress - 0.48) ** 2) / 0.012);
     return {
       timestamp: index * 40,
       wristSpeed: 0.12 + peak * 1.8,
@@ -19,6 +21,9 @@ function createSwing(overrides: Partial<PoseLiteSample> = {}): PoseLiteSample[] 
       wristAboveShoulder: progress > 0.3 && progress < 0.78,
       visibility: 94,
       trunkRotation: 9 + loading * 31 + peak * 13,
+      trunkAngularSpeed: 18 + trunkVelocity * 220,
+      elbowExtensionSpeed: 16 + elbowExtension * 420,
+      worldTracking: true,
       kneeFlexion: 11 + loading * 36,
       handLocked: true,
       balanceScore: 91,
@@ -37,6 +42,25 @@ test("scores a complete smash motion across six phases", () => {
   assert.ok(result.overallScore >= 60);
   assert.ok(result.captureQuality >= 80);
   assert.equal(result.dominantSide, "right");
+  assert.ok((result.kineticSequenceScore ?? 0) >= 70);
+  assert.ok((result.biomechanicsScore ?? 0) >= 60);
+  assert.equal(result.worldTrackingRatio, 100);
+});
+
+test("scores a proximal-to-distal sequence above a reversed arm-first sequence", () => {
+  const ordered = assessMotionWindow(createSwing(), "smash", "right");
+  const reversedSamples = createSwing().map((sample, index) => {
+    const progress = index / 17;
+    return {
+      ...sample,
+      trunkAngularSpeed: 18 + Math.exp(-((progress - 0.68) ** 2) / 0.012) * 220,
+      elbowExtensionSpeed: 16 + Math.exp(-((progress - 0.2) ** 2) / 0.012) * 420,
+    };
+  });
+  const reversed = assessMotionWindow(reversedSamples, "smash", "right");
+
+  assert.ok((ordered.kineticSequenceScore ?? 0) > (reversed.kineticSequenceScore ?? 0));
+  assert.ok(ordered.rhythmScore > reversed.rhythmScore);
 });
 
 test("uses selected backhand drill context and cross-body motion", () => {

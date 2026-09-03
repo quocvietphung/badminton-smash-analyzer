@@ -26,6 +26,10 @@ export type PoseFrameMemory = {
   rightWristSpeed: number;
   leftArmAngularSpeed: number;
   rightArmAngularSpeed: number;
+  trunkRotation: number;
+  trunkAngularSpeed: number;
+  leftElbowExtensionSpeed: number;
+  rightElbowExtensionSpeed: number;
   dominantSide: DominantSide;
   lockedSide: DominantSide | null;
   leftActivity: number;
@@ -57,6 +61,9 @@ export type SmashMetrics = {
   isContact: boolean;
   handLocked: boolean;
   trunkRotation: number;
+  trunkAngularSpeed: number;
+  elbowExtensionSpeed: number;
+  worldTracking: boolean;
   balanceScore: number;
   stanceWidth: number;
   wristAcrossBody: number;
@@ -151,6 +158,35 @@ function angleVelocity(current: number, previous: number | undefined, elapsedSec
   return clamp(Math.abs(current - previous) / elapsedSeconds, 0, 1800);
 }
 
+function extensionVelocity(current: number, previous: number | undefined, elapsedSeconds: number) {
+  if (previous === undefined || elapsedSeconds <= 0 || elapsedSeconds > 0.25) return 0;
+  return clamp((current - previous) / elapsedSeconds, 0, 1800);
+}
+
+function angleDifferenceRadians(left: number, right: number) {
+  let difference = left - right;
+  while (difference > Math.PI) difference -= Math.PI * 2;
+  while (difference < -Math.PI) difference += Math.PI * 2;
+  return difference;
+}
+
+function axialTrunkSeparation(
+  leftShoulder: PoseLandmark,
+  rightShoulder: PoseLandmark,
+  leftHip: PoseLandmark,
+  rightHip: PoseLandmark,
+) {
+  const shoulderOrientation = Math.atan2(
+    (rightShoulder.z ?? 0) - (leftShoulder.z ?? 0),
+    rightShoulder.x - leftShoulder.x,
+  );
+  const hipOrientation = Math.atan2(
+    (rightHip.z ?? 0) - (leftHip.z ?? 0),
+    rightHip.x - leftHip.x,
+  );
+  return Math.abs(angleDifferenceRadians(shoulderOrientation, hipOrientation)) * (180 / Math.PI);
+}
+
 function smoothVelocity(current: number, previous: number | undefined, alpha: number) {
   if (previous === undefined) return current;
   return previous * (1 - alpha) + current * alpha;
@@ -159,6 +195,14 @@ function smoothVelocity(current: number, previous: number | undefined, alpha: nu
 function confidenceFor(points: PoseLandmark[]) {
   const visible = points.map((point) => point.visibility ?? 1);
   return (visible.reduce((sum, value) => sum + value, 0) / visible.length) * 100;
+}
+
+function reliableWorldPoint(point: PoseLandmark | undefined) {
+  return Boolean(point
+    && Number.isFinite(point.x)
+    && Number.isFinite(point.y)
+    && Number.isFinite(point.z)
+    && (point.visibility ?? 1) >= 0.45);
 }
 
 export function analyzePose(
@@ -230,6 +274,16 @@ export function analyzePose(
     previous?.rightArmAngularSpeed,
     0.4,
   );
+  const leftElbowExtensionSpeed = smoothVelocity(
+    extensionVelocity(leftElbowAngle, previous?.leftElbowAngle, elapsedSeconds),
+    previous?.leftElbowExtensionSpeed,
+    0.42,
+  );
+  const rightElbowExtensionSpeed = smoothVelocity(
+    extensionVelocity(rightElbowAngle, previous?.rightElbowAngle, elapsedSeconds),
+    previous?.rightElbowExtensionSpeed,
+    0.42,
+  );
   const decay = 0.965;
   const leftActivity = (previous?.leftActivity ?? 0) * decay
     + leftSpeed + leftArmAngularSpeed / 650;
@@ -266,6 +320,7 @@ export function analyzePose(
   const rightKneeFlexion = clamp(180 - rightKneeAngle, 0, 120);
   const kneeFlexion = (leftKneeFlexion + rightKneeFlexion) / 2;
   const armAngularSpeed = isLeft ? leftArmAngularSpeed : rightArmAngularSpeed;
+  const elbowExtensionSpeed = isLeft ? leftElbowExtensionSpeed : rightElbowExtensionSpeed;
   const shoulderLine = shoulderMidpoint.y;
   const hipLine = hipMidpoint.y;
   const verticalTorsoLength = Math.max(0.08, Math.abs(hipLine - shoulderLine));
@@ -281,7 +336,26 @@ export function analyzePose(
     rightShoulder.x - leftShoulder.x,
   );
   const hipSlope = Math.atan2(rightHip.y - leftHip.y, rightHip.x - leftHip.x);
-  const trunkRotation = clamp(Math.abs(shoulderSlope - hipSlope) * (180 / Math.PI), 0, 90);
+  const imagePlaneSeparation = Math.abs(angleDifferenceRadians(shoulderSlope, hipSlope)) * (180 / Math.PI);
+  const worldTracking = Boolean(world && [
+    geometryLeftShoulder,
+    geometryRightShoulder,
+    geometryLeftHip,
+    geometryRightHip,
+  ].every(reliableWorldPoint));
+  const trunkRotation = clamp(worldTracking
+    ? axialTrunkSeparation(
+      geometryLeftShoulder,
+      geometryRightShoulder,
+      geometryLeftHip,
+      geometryRightHip,
+    )
+    : imagePlaneSeparation, 0, 90);
+  const trunkAngularSpeed = smoothVelocity(
+    angleVelocity(trunkRotation, previous?.trunkRotation, elapsedSeconds),
+    previous?.trunkAngularSpeed,
+    0.4,
+  );
   const bodyLean = Math.abs(shoulderMidpoint.x - hipMidpoint.x) / bodyScale;
   const stanceWidth = clamp(distance(leftAnkle, rightAnkle) / bodyScale, 0, 2);
   const balanceScore = clamp(100 - bodyLean * 115 - Math.max(0, 0.28 - stanceWidth) * 55, 0, 100);
@@ -363,6 +437,9 @@ export function analyzePose(
       isContact,
       handLocked: lockedSide !== null,
       trunkRotation,
+      trunkAngularSpeed,
+      elbowExtensionSpeed,
+      worldTracking,
       balanceScore,
       stanceWidth,
       wristAcrossBody,
@@ -394,6 +471,10 @@ export function analyzePose(
       rightWristSpeed: rightSpeed,
       leftArmAngularSpeed,
       rightArmAngularSpeed,
+      trunkRotation,
+      trunkAngularSpeed,
+      leftElbowExtensionSpeed,
+      rightElbowExtensionSpeed,
       dominantSide,
       lockedSide,
       leftActivity,
@@ -427,6 +508,9 @@ export const initialMetrics: SmashMetrics = {
   isContact: false,
   handLocked: false,
   trunkRotation: 0,
+  trunkAngularSpeed: 0,
+  elbowExtensionSpeed: 0,
+  worldTracking: false,
   balanceScore: 0,
   stanceWidth: 0,
   wristAcrossBody: 0,

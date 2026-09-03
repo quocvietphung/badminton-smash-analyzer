@@ -36,6 +36,23 @@ test("độ cao và độ duỗi không đổi đáng kể khi người đứng 
   assert.ok(Math.abs(base.metrics.bodyExtension - zoomed.metrics.bodyExtension) < 0.5);
 });
 
+test("dùng world landmarks để đo shoulder-hip separation theo mặt phẳng 3D", () => {
+  const imageLandmarks = athletePose();
+  const worldLandmarks = athletePose();
+  worldLandmarks[11] = { ...worldLandmarks[11], z: -0.06 };
+  worldLandmarks[12] = { ...worldLandmarks[12], z: 0.06 };
+  worldLandmarks[23] = { ...worldLandmarks[23], z: 0 };
+  worldLandmarks[24] = { ...worldLandmarks[24], z: 0 };
+
+  const result = analyzePose(imageLandmarks, 0, null, -10_000, {
+    preferredHand: "right",
+    worldLandmarks,
+  });
+
+  assert.equal(result.metrics.worldTracking, true);
+  assert.ok(result.metrics.trunkRotation >= 35 && result.metrics.trunkRotation <= 55);
+});
+
 test("tay vợt tự nhận được khóa và không đổi vì một frame nhiễu", () => {
   let memory: PoseFrameMemory | null = null;
   for (let index = 0; index < 18; index += 1) {

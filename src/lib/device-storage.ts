@@ -50,6 +50,25 @@ export async function readRecentMotionSessions<T extends StoredMotionSession>(li
 }
 
 export async function saveMotionSession<T extends StoredMotionSession>(item: T, limit = 12): Promise<T[]> {
+  const existing = await readRecentMotionSessions<T>(Math.max(0, limit - 1));
+  const keepBeforeInsert = new Set(existing.map((entry) => entry.id));
+  const pruneDatabase = await openDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = pruneDatabase.transaction(SESSION_STORE, "readwrite");
+    const store = transaction.objectStore(SESSION_STORE);
+    const request = store.openCursor();
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) return;
+      const value = cursor.value as StoredMotionSession;
+      if (!keepBeforeInsert.has(value.id) && value.id !== item.id) cursor.delete();
+      cursor.continue();
+    };
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error ?? new Error("Cannot prepare motion history"));
+  });
+  pruneDatabase.close();
+
   const database = await openDatabase();
   await new Promise<void>((resolve, reject) => {
     const transaction = database.transaction(SESSION_STORE, "readwrite");

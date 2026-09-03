@@ -12,12 +12,15 @@ import {
   CircleDashed,
   Dumbbell,
   Footprints,
+  Film,
   Gauge,
   Hand,
   History,
   Maximize2,
   MessageCircleMore,
   Minimize2,
+  Pause,
+  Play,
   RotateCcw,
   ShieldCheck,
   SlidersHorizontal,
@@ -91,8 +94,13 @@ import {
   saveMotionSession,
 } from "@/lib/device-storage";
 import { publishAnalysisSnapshot } from "@/lib/analysis-session-store";
+import {
+  clampReplayWindow,
+  createReplayWindow,
+} from "@/lib/session-replay";
 import type {
   AnalysisMovement,
+  AnalysisReplayWindow,
   AnalysisSource,
   AnalysisSummary,
 } from "@/lib/analysis-types";
@@ -105,6 +113,13 @@ type StorageStatus = "checking" | "indexeddb" | "localstorage";
 type TargetStatus = "waiting" | "selecting" | "locked" | "lost";
 type Connection = { start: number; end: number };
 type SwingCandidate = { startedAt: number; peakAt: number; peakEnergy: number };
+type SessionVideo = {
+  blob: Blob;
+  mimeType: string;
+  durationMs: number;
+  width: number;
+  height: number;
+};
 type AthleteOption = {
   trackId: number;
   shirtColor: ShirtColor;
@@ -130,6 +145,7 @@ type MotionSession = {
   preferredHand: PreferredHand;
   movements: AnalysisMovement[];
   summary: AnalysisSummary;
+  video?: SessionVideo;
 };
 
 type SessionDropdownOption<T extends string> = {
@@ -143,6 +159,7 @@ const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/was
 const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
 const APPEARANCE_WIDTH = 320;
 const APPEARANCE_HEIGHT = 180;
+const VIDEO_BITS_PER_SECOND = 1_600_000;
 
 const TECHNIQUES: Array<{ value: TechniqueMode; labelEn: string; labelDe: string; labelVi: string; short: string }> = [
   { value: "open", labelEn: "Auto detect motion group", labelDe: "Bewegungsgruppe automatisch erkennen", labelVi: "Tự nhận nhóm động tác", short: "AUTO" },
@@ -615,6 +632,88 @@ const SYSTEM_COPY: Record<StudioLanguage, {
   },
 };
 
+const REPLAY_COPY: Record<StudioLanguage, {
+  title: string;
+  subtitle: string;
+  savedLocally: string;
+  clip: string;
+  clips: string;
+  play: string;
+  pause: string;
+  previous: string;
+  next: string;
+  biomechanics: string;
+  kineticSequence: string;
+  contactHeight: string;
+  armSpeed: string;
+  telemetry: string;
+  noVideo: string;
+  videoSaved: string;
+  metricsOnly: string;
+  finalizing: string;
+}> = {
+  vi: {
+    title: "Video phân tích theo lần lặp",
+    subtitle: "Tự động phát riêng khoảnh khắc quanh từng động tác, đồng bộ với số liệu đã chấm.",
+    savedLocally: "Bản ghi chỉ lưu trong trình duyệt trên thiết bị này · không tải lên máy chủ",
+    clip: "Khoảnh khắc",
+    clips: "đoạn phân tích",
+    play: "Phát đoạn phân tích",
+    pause: "Tạm dừng video",
+    previous: "Đoạn trước",
+    next: "Đoạn sau",
+    biomechanics: "Cơ sinh học",
+    kineticSequence: "Chuỗi truyền lực",
+    contactHeight: "Điểm tiếp xúc",
+    armSpeed: "Tốc độ góc tay",
+    telemetry: "Thông số kỹ thuật tại lần lặp",
+    noVideo: "Phiên này chỉ có số liệu. Video khả dụng cho các phiên được ghi sau bản nâng cấp này và khi trình duyệt hỗ trợ MediaRecorder.",
+    videoSaved: "Có video",
+    metricsOnly: "Chỉ số liệu",
+    finalizing: "Đang hoàn tất video và đồng bộ các lần lặp…",
+  },
+  en: {
+    title: "Repetition video analysis",
+    subtitle: "Automatically replays only the moment around each movement, synchronized with its scored telemetry.",
+    savedLocally: "Recording stays in this browser on this device · never uploaded to a server",
+    clip: "Moment",
+    clips: "analysis clips",
+    play: "Play analysis clip",
+    pause: "Pause video",
+    previous: "Previous clip",
+    next: "Next clip",
+    biomechanics: "Biomechanics",
+    kineticSequence: "Kinetic sequence",
+    contactHeight: "Contact height",
+    armSpeed: "Arm angular speed",
+    telemetry: "Technical telemetry for this repetition",
+    noVideo: "This session contains metrics only. Video is available for sessions recorded after this upgrade when MediaRecorder is supported.",
+    videoSaved: "Video saved",
+    metricsOnly: "Metrics only",
+    finalizing: "Finalizing video and synchronizing repetitions…",
+  },
+  de: {
+    title: "Videoanalyse nach Wiederholung",
+    subtitle: "Spielt automatisch nur den Moment jeder Bewegung ab – synchron mit den bewerteten Messwerten.",
+    savedLocally: "Die Aufnahme bleibt in diesem Browser auf diesem Gerät · kein Server-Upload",
+    clip: "Moment",
+    clips: "Analyseclips",
+    play: "Analyseclip abspielen",
+    pause: "Video pausieren",
+    previous: "Vorheriger Clip",
+    next: "Nächster Clip",
+    biomechanics: "Biomechanik",
+    kineticSequence: "Kinetische Kette",
+    contactHeight: "Treffhöhe",
+    armSpeed: "Arm-Winkelgeschwindigkeit",
+    telemetry: "Technische Messwerte dieser Wiederholung",
+    noVideo: "Diese Einheit enthält nur Messwerte. Video ist für neue Aufnahmen nach diesem Upgrade verfügbar, sofern MediaRecorder unterstützt wird.",
+    videoSaved: "Video gespeichert",
+    metricsOnly: "Nur Messwerte",
+    finalizing: "Video wird abgeschlossen und Wiederholungen werden synchronisiert…",
+  },
+};
+
 function drawTrackedPoses(
   canvas: HTMLCanvasElement,
   poses: TrackedPose[],
@@ -938,7 +1037,23 @@ function localizeAnalysisMovement(
   const localized = movement.module === "footwork"
     ? localizeFootworkAssessment(movement, language)
     : localizeMotionAssessment(movement, language);
-  return { ...localized, index: movement.index, recordedAt: movement.recordedAt };
+  return { ...movement, ...localized, index: movement.index, recordedAt: movement.recordedAt };
+}
+
+function preferredRecordingMimeType() {
+  if (typeof MediaRecorder === "undefined") return "";
+  const candidates = [
+    "video/webm;codecs=vp9",
+    "video/webm;codecs=vp8",
+    "video/webm",
+    "video/mp4;codecs=h264",
+    "video/mp4",
+  ];
+  return candidates.find((type) => MediaRecorder.isTypeSupported(type)) ?? "";
+}
+
+function isSessionVideo(value: SessionVideo | undefined): value is SessionVideo {
+  return Boolean(value?.blob instanceof Blob && value.blob.size > 0 && value.durationMs > 0);
 }
 
 function isMotionSession(value: unknown): value is MotionSession {
@@ -1087,6 +1202,160 @@ function TechniqueRadar({ movement, ariaLabel }: { movement: AnalysisMovement; a
   );
 }
 
+function SessionReplay({
+  videoUrl,
+  movements,
+  language,
+}: {
+  videoUrl: string;
+  movements: AnalysisMovement[];
+  language: StudioLanguage;
+}) {
+  const copy = UI[language];
+  const replayCopy = REPLAY_COPY[language];
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const clips = useMemo(() => movements.filter((movement) => movement.replay), [movements]);
+  const [activeIndex, setActiveIndex] = useState(clips[0]?.index ?? 0);
+  const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const activePosition = Math.max(0, clips.findIndex((movement) => movement.index === activeIndex));
+  const activeMovement = clips[activePosition] ?? null;
+
+  const seekToClipStart = useCallback((movement = activeMovement) => {
+    const video = videoRef.current;
+    if (!video || !movement?.replay) return;
+    video.currentTime = movement.replay.startMs / 1_000;
+  }, [activeMovement]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.pause();
+    seekToClipStart();
+  }, [activeIndex, seekToClipStart]);
+
+  const togglePlayback = useCallback(() => {
+    const video = videoRef.current;
+    const replay = activeMovement?.replay;
+    if (!video || !replay) return;
+    if (!video.paused) {
+      video.pause();
+      setPlaying(false);
+      return;
+    }
+    const currentMs = video.currentTime * 1_000;
+    if (currentMs < replay.startMs || currentMs >= replay.endMs - 40) seekToClipStart(activeMovement);
+    void video.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+  }, [activeMovement, seekToClipStart]);
+
+  const selectClip = useCallback((movement: AnalysisMovement) => {
+    videoRef.current?.pause();
+    setPlaying(false);
+    setProgress(0);
+    setActiveIndex(movement.index);
+  }, []);
+
+  const moveClip = useCallback((direction: -1 | 1) => {
+    const next = clips[(activePosition + direction + clips.length) % clips.length];
+    if (next) selectClip(next);
+  }, [activePosition, clips, selectClip]);
+
+  const handleTimeUpdate = useCallback(() => {
+    const video = videoRef.current;
+    const replay = activeMovement?.replay;
+    if (!video || !replay) return;
+    const currentMs = video.currentTime * 1_000;
+    const duration = Math.max(1, replay.endMs - replay.startMs);
+    setProgress(Math.max(0, Math.min(100, ((currentMs - replay.startMs) / duration) * 100)));
+    if (currentMs >= replay.endMs) {
+      video.pause();
+      setPlaying(false);
+      setProgress(0);
+      seekToClipStart(activeMovement);
+    }
+  }, [activeMovement, seekToClipStart]);
+
+  if (!activeMovement?.replay) return null;
+  const clipDuration = Math.max(0, activeMovement.replay.endMs - activeMovement.replay.startMs) / 1_000;
+  const telemetry = activeMovement.module === "stroke" ? [
+    { label: copy.elbow, value: `${activeMovement.metrics.elbowAngle}°` },
+    { label: copy.shoulder, value: `${activeMovement.metrics.shoulderAngle}°` },
+    { label: copy.rotation, value: `${activeMovement.metrics.trunkRotation}°` },
+    { label: copy.knee, value: `${activeMovement.metrics.kneeFlexion}°` },
+    { label: replayCopy.contactHeight, value: `${activeMovement.metrics.contactHeight}%` },
+    { label: copy.extension, value: `${activeMovement.metrics.bodyExtension}%` },
+    { label: replayCopy.armSpeed, value: `${activeMovement.metrics.armAngularSpeed}°/s` },
+    { label: copy.balance, value: `${activeMovement.metrics.balance}%` },
+  ] : [
+    { label: copy.footSpeed, value: `${activeMovement.metrics.footSpeed?.toFixed(2) ?? "0.00"} rel/s` },
+    { label: copy.centerSpeed, value: `${activeMovement.metrics.centerSpeed?.toFixed(2) ?? "0.00"} rel/s` },
+    { label: copy.stance, value: `${activeMovement.metrics.stanceWidth?.toFixed(2) ?? "0.00"}×` },
+    { label: copy.landing, value: `${activeMovement.metrics.landingSymmetry ?? 0}%` },
+  ];
+
+  return (
+    <section className={styles.replayPanel}>
+      <div className={styles.panelHeading}>
+        <div><span>{replayCopy.title}</span><strong>{replayCopy.subtitle}</strong></div>
+        <Film />
+      </div>
+      <div className={styles.replayLayout}>
+        <div className={styles.replayStage}>
+          <video
+            ref={videoRef}
+            src={videoUrl}
+            playsInline
+            muted
+            preload="metadata"
+            onLoadedMetadata={() => seekToClipStart()}
+            onTimeUpdate={handleTimeUpdate}
+            onPause={() => setPlaying(false)}
+            onPlay={() => setPlaying(true)}
+          />
+          <div className={styles.replayIdentity}>
+            <span>{replayCopy.clip} {String(activeMovement.index).padStart(2, "0")}</span>
+            <strong>{activeMovement.label}</strong>
+          </div>
+          <div className={styles.replayScores}>
+            <span><small>{copy.score}</small><strong>{activeMovement.overallScore}<em>/100</em></strong></span>
+            {activeMovement.biomechanicsScore !== undefined ? <span><small>{replayCopy.biomechanics}</small><strong>{activeMovement.biomechanicsScore}<em>/100</em></strong></span> : null}
+            {activeMovement.kineticSequenceScore !== undefined ? <span><small>{replayCopy.kineticSequence}</small><strong>{activeMovement.kineticSequenceScore}<em>/100</em></strong></span> : null}
+          </div>
+          <div className={styles.replayAngleStrip}>
+            {telemetry.slice(0, 5).map((metric) => <span key={metric.label}><small>{metric.label}</small><strong>{metric.value}</strong></span>)}
+          </div>
+          <button type="button" className={styles.replayPlayButton} onClick={togglePlayback} aria-label={playing ? replayCopy.pause : replayCopy.play}>
+            {playing ? <Pause /> : <Play />}
+          </button>
+        </div>
+        <aside className={styles.clipQueue}>
+          <header><span>{clips.length} {replayCopy.clips}</span><strong>{clipDuration.toFixed(1)}s</strong></header>
+          <div>{clips.map((movement) => <button
+            type="button"
+            key={movement.index}
+            className={movement.index === activeMovement.index ? styles.clipActive : ""}
+            onClick={() => selectClip(movement)}
+          >
+            <span>{String(movement.index).padStart(2, "0")}</span>
+            <div><strong>{movement.label}</strong><small>{movement.overallScore}/100 · {movement.replay ? ((movement.replay.endMs - movement.replay.startMs) / 1_000).toFixed(1) : "0.0"}s</small></div>
+            <Play />
+          </button>)}</div>
+        </aside>
+      </div>
+      <div className={styles.replayControls}>
+        <button type="button" onClick={() => moveClip(-1)} disabled={clips.length < 2} aria-label={replayCopy.previous}><ChevronDown /></button>
+        <span><i style={{ width: `${progress}%` }} /></span>
+        <button type="button" onClick={() => moveClip(1)} disabled={clips.length < 2} aria-label={replayCopy.next}><ChevronDown /></button>
+      </div>
+      <div className={styles.replayTelemetry}>
+        <span>{replayCopy.telemetry}</span>
+        <div>{telemetry.map((metric) => <article key={metric.label}><small>{metric.label}</small><strong>{metric.value}</strong></article>)}</div>
+      </div>
+      <p className={styles.replayPrivacy}><ShieldCheck />{replayCopy.savedLocally}</p>
+    </section>
+  );
+}
+
 type MotionAnalyzerProps = {
   view: StudioView;
   language: StudioLanguage;
@@ -1099,6 +1368,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   const systemCopy = SYSTEM_COPY[language];
   const [status, setStatus] = useState<AnalyzerStatus>("idle");
   const [recording, setRecording] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
   const [source, setSource] = useState<AnalysisSource>("none");
   const [athleteDetected, setAthleteDetected] = useState(false);
   const [visibleAthletes, setVisibleAthletes] = useState<AthleteOption[]>([]);
@@ -1119,6 +1389,8 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   const [movements, setMovements] = useState<AnalysisMovement[]>([]);
   const [summary, setSummary] = useState<AnalysisSummary | null>(null);
   const [history, setHistory] = useState<MotionSession[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [replayVideoUrl, setReplayVideoUrl] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [focusMode, setFocusMode] = useState(false);
   const [cameraSettingsOpen, setCameraSettingsOpen] = useState(false);
@@ -1133,6 +1405,10 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   const animationRef = useRef<number | null>(null);
   const runningRef = useRef(false);
   const recordingRef = useRef(false);
+  const sessionRecorderRef = useRef<MediaRecorder | null>(null);
+  const recorderChunksRef = useRef<Blob[]>([]);
+  const recorderStartedAtRef = useRef<number | null>(null);
+  const replayVideoUrlRef = useRef<string | null>(null);
   const workerInitializedRef = useRef(false);
   const workerFrameBusyRef = useRef(false);
   const lastVideoTimeRef = useRef(-1);
@@ -1163,6 +1439,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   const preferredHandRef = useRef<PreferredHand>(preferredHand);
   const processFrameRef = useRef<(poses: VisionWorkerPose[], timestamp: number) => void>(() => undefined);
   const analysisResolversRef = useRef(new Map<string, (result: MotionAssessment) => void>());
+  const pendingAnalysesRef = useRef(new Set<Promise<void>>());
   const workerInitResolverRef = useRef<{ resolve: () => void; reject: (error: Error) => void } | null>(null);
   const lastUiUpdateRef = useRef(0);
 
@@ -1181,6 +1458,13 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   const averageCapture = useMemo(() => movements.length
     ? Math.round(movements.reduce((sum, movement) => sum + movement.captureQuality, 0) / movements.length)
     : 0, [movements]);
+
+  const replaceReplayVideo = useCallback((video?: SessionVideo) => {
+    if (replayVideoUrlRef.current) URL.revokeObjectURL(replayVideoUrlRef.current);
+    const nextUrl = isSessionVideo(video) ? URL.createObjectURL(video.blob) : null;
+    replayVideoUrlRef.current = nextUrl;
+    setReplayVideoUrl(nextUrl);
+  }, []);
 
   useEffect(() => { recordingRef.current = recording; }, [recording]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
@@ -1274,6 +1558,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
 
   useEffect(() => {
     void (async () => {
+      void navigator.storage?.persist?.().catch(() => false);
       try {
         const sessions = await readRecentMotionSessions<MotionSession>(12);
         setHistory(sessions.filter(isMotionSession));
@@ -1305,8 +1590,10 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   useEffect(() => () => {
     runningRef.current = false;
     if (animationRef.current !== null) cancelAnimationFrame(animationRef.current);
+    if (sessionRecorderRef.current?.state === "recording") sessionRecorderRef.current.stop();
     streamRef.current?.getTracks().forEach((track) => track.stop());
     landmarkerRef.current?.close();
+    if (replayVideoUrlRef.current) URL.revokeObjectURL(replayVideoUrlRef.current);
   }, []);
 
   const classifyMotion = useCallback((samples: PoseLiteSample[], dominantSide: "left" | "right") => {
@@ -1337,20 +1624,76 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     });
   }, [language]);
 
-  const registerMovement = useCallback((samples: PoseLiteSample[], dominantSide: "left" | "right") => {
+  const startSessionVideoRecording = useCallback(() => {
+    const stream = streamRef.current;
+    recorderChunksRef.current = [];
+    recorderStartedAtRef.current = null;
+    sessionRecorderRef.current = null;
+    if (!stream || typeof MediaRecorder === "undefined") return;
+    try {
+      const mimeType = preferredRecordingMimeType();
+      const recorder = new MediaRecorder(stream, {
+        ...(mimeType ? { mimeType } : {}),
+        videoBitsPerSecond: VIDEO_BITS_PER_SECOND,
+      });
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) recorderChunksRef.current.push(event.data);
+      };
+      recorderStartedAtRef.current = performance.now();
+      sessionRecorderRef.current = recorder;
+      recorder.start(500);
+    } catch {
+      recorderChunksRef.current = [];
+      recorderStartedAtRef.current = null;
+      sessionRecorderRef.current = null;
+    }
+  }, []);
+
+  const stopSessionVideoRecording = useCallback((): Promise<SessionVideo | null> => {
+    const recorder = sessionRecorderRef.current;
+    const startedAt = recorderStartedAtRef.current;
+    if (!recorder || recorder.state === "inactive" || startedAt === null) return Promise.resolve(null);
+    const width = videoRef.current?.videoWidth ?? 0;
+    const height = videoRef.current?.videoHeight ?? 0;
+    return new Promise((resolve) => {
+      const finish = () => {
+        const mimeType = recorder.mimeType || recorderChunksRef.current[0]?.type || "video/webm";
+        const blob = new Blob(recorderChunksRef.current, { type: mimeType });
+        const durationMs = Math.max(1, Math.round(performance.now() - startedAt));
+        recorderChunksRef.current = [];
+        recorderStartedAtRef.current = null;
+        sessionRecorderRef.current = null;
+        resolve(blob.size > 0 ? { blob, mimeType, durationMs, width, height } : null);
+      };
+      recorder.addEventListener("stop", finish, { once: true });
+      recorder.addEventListener("error", () => resolve(null), { once: true });
+      recorder.stop();
+    });
+  }, []);
+
+  const registerMovement = useCallback((
+    samples: PoseLiteSample[],
+    dominantSide: "left" | "right",
+    replay?: AnalysisReplayWindow,
+  ) => {
     const index = nextIndexRef.current++;
     setCurrentMessage(language === "vi" ? `Đang chấm lần lặp ${index}…` : language === "de" ? `Wiederholung ${index} wird bewertet…` : `Scoring repetition ${index}…`);
-    void classifyMotion(samples, dominantSide).then((assessment) => {
+    const pending = classifyMotion(samples, dominantSide).then((assessment) => {
       const event: AnalysisMovement = {
         ...assessment,
         index,
         recordedAt: new Date().toISOString(),
+        ...(replay ? { replay } : {}),
       };
       const next = [...movementsRef.current, event].sort((left, right) => left.index - right.index);
       movementsRef.current = next;
       setMovements(next);
       setCurrentMessage(`${assessment.label} · ${assessment.overallScore}/100`);
+    }).catch(() => {
+      setCurrentMessage(language === "vi" ? `Không thể chấm lần lặp ${index}` : language === "de" ? `Wiederholung ${index} konnte nicht bewertet werden` : `Could not score repetition ${index}`);
     });
+    pendingAnalysesRef.current.add(pending);
+    void pending.finally(() => pendingAnalysesRef.current.delete(pending));
   }, [classifyMotion, language]);
 
   const resetTargetMotion = useCallback(() => {
@@ -1714,7 +2057,11 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
       if (active.peakEnergy > energyThreshold && windowSamples.length >= (isFootwork ? 9 : 6)
         && now - lastContactRef.current > (isFootwork ? 1_050 : 820)) {
         lastContactRef.current = now;
-        registerMovement(windowSamples, analysis.metrics.dominantSide);
+        registerMovement(
+          windowSamples,
+          analysis.metrics.dominantSide,
+          createReplayWindow(active, now, recorderStartedAtRef.current),
+        );
       }
     }
   }, [copy.footworkWaiting, copy.liveWaiting, copy.notRecording, copy.targetLost, language, registerMovement, resetLockRecovery, resetTargetMotion]);
@@ -1866,6 +2213,10 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     recordingRef.current = false;
     setRecording(false);
     setCameraSettingsOpen(false);
+    if (sessionRecorderRef.current?.state === "recording") sessionRecorderRef.current.stop();
+    sessionRecorderRef.current = null;
+    recorderChunksRef.current = [];
+    recorderStartedAtRef.current = null;
     if (animationRef.current !== null) cancelAnimationFrame(animationRef.current);
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
@@ -1905,10 +2256,12 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     setMovements([]);
     setSummary(null);
     setSource(nextSource);
+    setActiveSessionId(null);
+    replaceReplayVideo();
     setCurrentMessage(recordingRef.current
       ? trainingModuleRef.current === "footwork" ? copy.footworkWaiting : copy.liveWaiting
       : copy.notRecording);
-  }, [copy.footworkWaiting, copy.liveWaiting, copy.notRecording]);
+  }, [copy.footworkWaiting, copy.liveWaiting, copy.notRecording, replaceReplayVideo]);
 
   const switchTrainingModule = useCallback((nextModule: TrainingModule) => {
     if (recordingRef.current || nextModule === trainingModuleRef.current) return;
@@ -1918,30 +2271,43 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     setCurrentMessage(copy.notRecording);
   }, [copy.notRecording, resetSet]);
 
-  const saveCurrentSession = useCallback((sessionSummary: AnalysisSummary) => {
+  const saveCurrentSession = useCallback((sessionSummary: AnalysisSummary, video: SessionVideo | null) => {
     if (!movementsRef.current.length) return;
+    const sessionMovements = movementsRef.current.map((movement) => {
+      if (!movement.replay || !video) return movement;
+      return {
+        ...movement,
+        replay: clampReplayWindow(movement.replay, video.durationMs),
+      };
+    });
+    movementsRef.current = sessionMovements;
+    setMovements(sessionMovements);
     const session: MotionSession = {
       id: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
       trainingModule: trainingModuleRef.current,
       drillMode: trainingModuleRef.current === "stroke" ? modeRef.current : footworkModeRef.current,
       preferredHand: preferredHandRef.current,
-      movements: [...movementsRef.current],
+      movements: sessionMovements,
       summary: sessionSummary,
+      ...(video ? { video } : {}),
     };
+    setActiveSessionId(session.id);
+    replaceReplayVideo(session.video);
     const optimistic = [session, ...history].slice(0, 12);
     setHistory(optimistic);
     void saveMotionSession(session, 12).then((saved) => {
       setHistory(saved.filter(isMotionSession));
       setStorageStatus("indexeddb");
     }).catch(() => {
-      window.localStorage.setItem(HISTORY_FALLBACK_KEY, JSON.stringify(optimistic));
+      const metadataOnly = optimistic.map((entry) => ({ ...entry, video: undefined }));
+      window.localStorage.setItem(HISTORY_FALLBACK_KEY, JSON.stringify(metadataOnly));
       setStorageStatus("localstorage");
     });
-  }, [history]);
+  }, [history, replaceReplayVideo]);
 
-  const toggleRecording = useCallback(() => {
-    if (status !== "live") return;
+  const toggleRecording = useCallback(async () => {
+    if (status !== "live" || finalizing) return;
     if (!recordingRef.current) {
       if (targetStatusRef.current !== "locked" || selectedTrackIdRef.current === null) {
         setCurrentMessage(copy.targetRequired);
@@ -1951,19 +2317,28 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
       setCameraSettingsOpen(false);
       recordingRef.current = true;
       setRecording(true);
+      startSessionVideoRecording();
       setCurrentMessage(trainingModuleRef.current === "footwork" ? copy.footworkWaiting : copy.liveWaiting);
       return;
     }
     recordingRef.current = false;
     setRecording(false);
+    setFinalizing(true);
+    setCurrentMessage(REPLAY_COPY[language].finalizing);
+    const videoPromise = stopSessionVideoRecording();
+    await Promise.allSettled([...pendingAnalysesRef.current]);
+    const video = await videoPromise;
     const nextSummary = createSummary(movementsRef.current, language);
     setSummary(nextSummary);
-    saveCurrentSession(nextSummary);
+    saveCurrentSession(nextSummary, video);
+    setFinalizing(false);
     onNavigate("sessions");
-  }, [copy.footworkWaiting, copy.liveWaiting, copy.targetRequired, language, onNavigate, resetSet, saveCurrentSession, status]);
+  }, [copy.footworkWaiting, copy.liveWaiting, copy.targetRequired, finalizing, language, onNavigate, resetSet, saveCurrentSession, startSessionVideoRecording, status, stopSessionVideoRecording]);
 
   const loadDemo = useCallback(() => {
     setSessionSetupOpen(false);
+    replaceReplayVideo();
+    setActiveSessionId(null);
     const demo = createDemoMovements(trainingModule, mode, footworkMode, language);
     movementsRef.current = demo;
     nextIndexRef.current = demo.length + 1;
@@ -1972,7 +2347,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     setSource("demo");
     setSummary(createSummary(demo, language));
     onNavigate("sessions");
-  }, [footworkMode, language, mode, onNavigate, trainingModule]);
+  }, [footworkMode, language, mode, onNavigate, replaceReplayVideo, trainingModule]);
 
   useEffect(() => {
     const handleDemo = () => loadDemo();
@@ -1992,7 +2367,9 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     else setMode(session.drillMode as TechniqueMode);
     setPreferredHand(session.preferredHand);
     setSource("history");
-  }, [language]);
+    setActiveSessionId(session.id);
+    replaceReplayVideo(session.video);
+  }, [language, replaceReplayVideo]);
 
   const profileMovement = latest ?? movements[0] ?? null;
   const dateFormatter = useMemo(() => new Intl.DateTimeFormat(language === "vi" ? "vi-VN" : language === "de" ? "de-DE" : "en-US", {
@@ -2244,17 +2621,17 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
               <button
                 type="button"
                 className={`${styles.recordControl} ${recording ? styles.recordControlActive : ""}`}
-                disabled={!recording && targetStatus !== "locked"}
-                onClick={toggleRecording}
+                disabled={finalizing || (!recording && targetStatus !== "locked")}
+                onClick={() => void toggleRecording()}
                 aria-label={recording ? copy.stopSet : copy.startSet}
               ><span aria-hidden="true" /></button>
-              <small>{recording ? copy.stopSet : targetStatus === "locked" ? copy.startSet : copy.targetRequired}</small>
+              <small>{finalizing ? REPLAY_COPY[language].finalizing : recording ? copy.stopSet : targetStatus === "locked" ? copy.startSet : copy.targetRequired}</small>
             </div>
             <div className={styles.cameraControlGroup}>
               <button
                 type="button"
                 className={styles.cameraOffControl}
-                disabled={recording}
+                disabled={recording || finalizing}
                 onClick={stopCamera}
                 aria-label={copy.stopCamera}
                 title={recording ? copy.stopSet : copy.stopCamera}
@@ -2262,7 +2639,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
               <small>{copy.stopCamera}</small>
             </div>
           </div> : null}
-          <div className={styles.liveEvent}><span>{recording ? copy.recording : copy.phase}</span><strong>{recording ? currentMessage : status === "live" ? trainingModule === "footwork" ? liveFootworkPhaseLabel(metrics, language) : livePhaseLabel(metrics.phase, language) : trainingModule === "footwork" ? copy.footworkWaiting : copy.liveWaiting}</strong></div>
+          <div className={styles.liveEvent}><span>{recording ? copy.recording : finalizing ? copy.stopSet : copy.phase}</span><strong>{recording || finalizing ? currentMessage : status === "live" ? trainingModule === "footwork" ? liveFootworkPhaseLabel(metrics, language) : livePhaseLabel(metrics.phase, language) : trainingModule === "footwork" ? copy.footworkWaiting : copy.liveWaiting}</strong></div>
           {recording ? <div className={styles.recordingPulse} aria-hidden="true" /> : null}
         </div>
 
@@ -2314,6 +2691,13 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
         </section>
 
         {profileMovement ? <div className={styles.reportGrid}>
+          {replayVideoUrl ? <SessionReplay
+            key={activeSessionId ?? replayVideoUrl}
+            videoUrl={replayVideoUrl}
+            movements={movements}
+            language={language}
+          /> : activeSessionId && source !== "demo" ? <section className={styles.replayUnavailable}><Film /><div><strong>{REPLAY_COPY[language].title}</strong><p>{REPLAY_COPY[language].noVideo}</p></div></section> : null}
+
           <section className={styles.profilePanel}>
             <div className={styles.panelHeading}><div><span>{trainingModule === "footwork" ? language === "vi" ? "Hồ sơ bộ pháp" : language === "de" ? "Beinarbeitsprofil" : "Footwork profile" : copy.profile}</span><strong>{profileMovement.label}</strong></div>{trainingModule === "footwork" ? <Footprints /> : <Target />}</div>
             <div className={styles.profileBody}><TechniqueRadar movement={profileMovement} ariaLabel={systemCopy.techniqueChart} /><div className={styles.profileLegend}><span><i />{language === "vi" ? "Tư thế" : language === "de" ? "Haltung" : "Posture"}<strong>{profileMovement.postureScore}</strong></span><span><i />{language === "vi" ? "Nhịp" : language === "de" ? "Rhythmus" : "Rhythm"}<strong>{profileMovement.rhythmScore}</strong></span><span><i />{language === "vi" ? "Hồi vị" : language === "de" ? "Rückkehr" : "Recovery"}<strong>{profileMovement.recoveryScore}</strong></span><span><i />{copy.balance}<strong>{profileMovement.metrics.balance}</strong></span>{trainingModule === "stroke" && profileMovement.biomechanicsScore !== undefined ? <span><i />{language === "vi" ? "Cơ sinh học" : language === "de" ? "Biomechanik" : "Biomechanics"}<strong>{profileMovement.biomechanicsScore}</strong></span> : null}<span><i />{copy.capture}<strong>{profileMovement.captureQuality}</strong></span></div></div>
@@ -2348,7 +2732,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
 
           <section className={styles.historyPanel}>
             <div className={styles.panelHeading}><div><span>{copy.recent}</span><strong>{history.length}/12</strong></div><History /></div>
-            <div className={styles.historyList}>{localizedHistory.length ? localizedHistory.map((session) => <button type="button" key={session.id} onClick={() => loadHistory(session)}><span><strong>{session.summary.headline}</strong><small>{dateFormatter.format(new Date(session.createdAt))}</small></span><ChevronRight /></button>) : <p>{copy.noHistory}</p>}</div>
+            <div className={styles.historyList}>{localizedHistory.length ? localizedHistory.map((session) => <button type="button" className={session.id === activeSessionId ? styles.historyActive : ""} key={session.id} onClick={() => loadHistory(session)}><span><strong>{session.summary.headline}</strong><small>{dateFormatter.format(new Date(session.createdAt))} · {isSessionVideo(session.video) ? REPLAY_COPY[language].videoSaved : REPLAY_COPY[language].metricsOnly}</small></span><ChevronRight /></button>) : <p>{copy.noHistory}</p>}</div>
           </section>
         </div> : null}
 

@@ -7,9 +7,16 @@ import type { PreferredHand } from "./pose-metrics";
 
 export type AnalysisSource = "none" | "demo" | "live" | "history";
 
+export type AnalysisReplayWindow = {
+  startMs: number;
+  peakMs: number;
+  endMs: number;
+};
+
 export type AnalysisMovement = MotionAssessment & {
   index: number;
   recordedAt: string;
+  replay?: AnalysisReplayWindow;
 };
 
 export type AnalysisSummary = {

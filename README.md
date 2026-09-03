@@ -16,7 +16,7 @@ Frame one athlete, confirm the target, choose a drill, and record a set. SmashLa
 
 ### Session Reports
 
-Review repetition count, motion score, consistency, capture quality, and the main priorities to work on. Sessions are persisted locally with IndexedDB, so the app does not need a video-processing backend or database.
+Review repetition count, motion score, consistency, capture quality, and the main priorities to work on. Each new camera session can also keep its recording in IndexedDB and replay only the short window around each detected repetition. The replay overlays the matching joint angles, biomechanics score, kinetic-sequence score, contact-height proxy, angular speed, and balance without uploading video to a backend.
 
 ![SmashLab Session Reports](public/screenshots/session-reports.png)
 
@@ -33,7 +33,8 @@ Ask questions about the current training data and get practical explanations fro
 - Analyse footwork cycles such as split step, chassé, lunge, jump and landing, scissor jump, China jump, and recovery to base.
 - Use MediaPipe Pose Landmarker Lite, optional world landmarks, appearance-aware tracking, and a Web Worker when supported.
 - Compare repetitions and highlight technique strengths, consistency, balance, recovery, and capture quality.
-- Store up to 12 sessions locally on the device with no account or database.
+- Record a session once, then jump directly between automatically indexed repetition moments with synchronized technique telemetry over the video.
+- Store up to 12 reports and their supported browser recordings locally on the device with no account or cloud database. Older entries are pruned before a new video is written to reduce storage-quota failures.
 - Offer English, Vietnamese, and German UI copy, plus dark and light training themes.
 - Provide an optional Azure OpenAI Coach route with rate limiting and retrieval-grounded badminton references.
 
@@ -43,6 +44,7 @@ SmashLab combines local computer vision with a focused generative-AI layer. Each
 
 - **MediaPipe Pose Landmarker Lite** detects full-body landmarks directly in the browser. Optional world landmarks provide a more stable 3D-aware signal when the device supports them.
 - **On-device motion analysis** converts landmark sequences into joint angles, body extension, balance, rhythm, footwork travel, and recovery signals. When MediaPipe world landmarks are available, the stroke pipeline estimates 3D shoulder–hip separation and checks whether lower-body loading, trunk rotation, elbow extension, and wrist acceleration occur in a plausible proximal-to-distal order. These are camera-derived biomechanics proxies rather than laboratory measurements.
+- **Local session replay** uses the browser MediaRecorder and the same monotonic clock as pose analysis. Every accepted repetition receives pre-roll, peak, and post-roll timestamps, so the report can replay only that movement and show the exact assessment attached to it. The original recording and clip indexes remain in IndexedDB on the current device.
 - **Multi-athlete target lock** follows up to four people with a lightweight MOT pipeline inspired by SORT, ByteTrack, and OC-SORT. It combines Kalman motion prediction, observation-direction consistency, two-stage confidence association, body scale, and a bounded torso-appearance gallery. After an occlusion, observation-centric re-updates correct stale velocity before tracking continues. A target must remain stable across multiple frames before it can be locked, and ambiguous recovery pauses scoring rather than silently switching athletes. This is not face recognition.
 - **Rule-based motion classification** groups movement sequences into racket-technique and footwork drills. The classifier is intentionally evidence-aware: it can report insufficient evidence instead of claiming to see shuttle contact, racket-face angle, or flight trajectory.
 - **Web Worker processing** moves pose inference and sequence evaluation off the main UI thread when the browser supports it, keeping the Studio responsive during live capture.
@@ -128,7 +130,7 @@ SmashLab is a standard Next.js App Router application and can be deployed direct
 3. Add the optional Azure variables under **Project Settings → Environment Variables**.
 4. Deploy and open the generated HTTPS URL so browsers can grant camera permission.
 
-Video inference runs in the browser, so Vercel only serves the application and handles the optional AI Coach Route Handler. No Python service, GPU instance, or cloud video pipeline is required.
+Video inference, recording, clip indexing, and replay all run in the browser, so Vercel only serves the application and handles the optional AI Coach Route Handler. No Python service, GPU instance, object storage, or cloud video pipeline is required.
 
 The computer-vision and biomechanics calculations do not consume Vercel Functions or GPU time. This architecture remains suitable for a Vercel Hobby deployment because pose inference, target tracking, kinetic-sequence scoring, and local session storage all run on the athlete's device.
 
@@ -138,8 +140,9 @@ The computer-vision and biomechanics calculations do not consume Vercel Function
 Camera
   → MediaPipe Pose Landmarker (browser)
   → Web Worker + athlete tracking + motion metrics
-  → Local session store (IndexedDB)
-  → Session reports / AI Coach
+  → MediaRecorder + repetition timestamps
+  → Local session/video store (IndexedDB)
+  → Clip replay + session reports / AI Coach
                          ↘ reduced metrics → Azure OpenAI Route Handler
 ```
 

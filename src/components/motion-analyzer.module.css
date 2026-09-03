@@ -412,6 +412,58 @@
 .scoreRing small { position: absolute; top: 39px; color: var(--sl-muted); font-size: 9px; white-space: nowrap; }
 .reportGrid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
 .profilePanel,.phasePanel,.coachingPanel,.repetitionPanel,.historyPanel { border: 1px solid var(--line); border-radius: 24px; background: linear-gradient(155deg,var(--panel-soft),var(--panel)); padding: 20px; }
+.replayPanel { grid-column: 1/-1; overflow: hidden; border: 1px solid var(--sl-border-strong); border-radius: 26px; background: linear-gradient(150deg,color-mix(in srgb,var(--sl-accent) 4%,var(--panel-soft)),var(--panel)); padding: 20px; box-shadow: 0 24px 70px rgba(0,8,7,.16); }
+.replayLayout { display: grid; grid-template-columns: minmax(0,1.65fr) minmax(240px,.55fr); gap: 10px; margin-top: 15px; }
+.replayStage { position: relative; min-height: 360px; overflow: hidden; border: 1px solid rgba(255,255,255,.09); border-radius: 20px; background: #010606; }
+.replayStage::after { position: absolute; z-index: 1; inset: 0; background: linear-gradient(180deg,rgba(0,8,8,.67),transparent 28%,transparent 57%,rgba(0,8,8,.84)); content: ""; pointer-events: none; }
+.replayStage video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.replayIdentity { position: absolute; z-index: 3; top: 15px; left: 15px; display: flex; flex-direction: column; border-left: 2px solid var(--sl-accent); padding-left: 10px; text-shadow: 0 2px 14px rgba(0,0,0,.72); }
+.replayIdentity span { color: var(--sl-accent); font: 800 8px var(--font-mono); letter-spacing: .13em; text-transform: uppercase; }
+.replayIdentity strong { margin-top: 5px; color: #f4fffc; font-size: 15px; }
+.replayScores { position: absolute; z-index: 3; top: 13px; right: 13px; display: flex; gap: 6px; }
+.replayScores > span { display: flex; min-width: 76px; flex-direction: column; align-items: flex-end; border: 1px solid rgba(255,255,255,.13); border-radius: 12px; background: rgba(2,13,13,.75); padding: 8px 9px; backdrop-filter: blur(13px); }
+.replayScores small { color: #9fb5af; font-size: 7px; }
+.replayScores strong { margin-top: 4px; color: #eafff9; font: 800 16px var(--font-mono); }
+.replayScores em { color: #81958f; font-size: 7px; font-style: normal; }
+.replayAngleStrip { position: absolute; z-index: 3; right: 13px; bottom: 13px; left: 13px; display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 5px; }
+.replayAngleStrip span { display: flex; min-width: 0; flex-direction: column; border: 1px solid rgba(255,255,255,.1); border-radius: 10px; background: rgba(2,13,13,.75); padding: 7px 8px; backdrop-filter: blur(12px); }
+.replayAngleStrip small { overflow: hidden; color: #91aaa3; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.replayAngleStrip strong { margin-top: 4px; color: #effffb; font: 750 12px var(--font-mono); }
+.replayPlayButton { position: absolute; z-index: 4; top: 50%; left: 50%; display: grid; width: 58px; height: 58px; place-items: center; border: 1px solid rgba(125,255,216,.52); border-radius: 50%; background: rgba(5,28,27,.78); color: var(--sl-accent); box-shadow: 0 0 0 7px rgba(104,245,202,.08),0 14px 38px rgba(0,0,0,.35); transform: translate(-50%,-50%); cursor: pointer; backdrop-filter: blur(13px); }
+.replayPlayButton svg { width: 21px; fill: currentColor; }
+.clipQueue { display: flex; min-height: 0; flex-direction: column; overflow: hidden; border: 1px solid var(--line); border-radius: 20px; background: var(--sl-surface-soft); padding: 12px; }
+.clipQueue > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 3px 10px; }
+.clipQueue > header span { color: var(--sl-muted); font-size: 9px; }
+.clipQueue > header strong { color: var(--sl-accent); font: 750 11px var(--font-mono); }
+.clipQueue > div { display: flex; max-height: 310px; flex-direction: column; gap: 6px; overflow-y: auto; }
+.clipQueue button { display: grid; grid-template-columns: 32px minmax(0,1fr) 22px; align-items: center; gap: 9px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: inherit; padding: 9px; text-align: left; cursor: pointer; }
+.clipQueue button > span { color: var(--sl-faint); font: 800 9px var(--font-mono); }
+.clipQueue button > div { display: flex; min-width: 0; flex-direction: column; }
+.clipQueue button strong { overflow: hidden; color: var(--sl-text-soft); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.clipQueue button small { margin-top: 4px; color: var(--sl-muted); font-size: 8px; }
+.clipQueue button > svg { width: 13px; color: var(--sl-faint); fill: currentColor; }
+.clipQueue .clipActive { border-color: var(--sl-border-strong); background: color-mix(in srgb,var(--sl-accent) 8%,var(--panel)); box-shadow: inset 2px 0 0 var(--sl-accent); }
+.clipQueue .clipActive > span,.clipQueue .clipActive > svg { color: var(--sl-accent); }
+.replayControls { display: grid; grid-template-columns: 34px minmax(0,1fr) 34px; align-items: center; gap: 9px; margin-top: 10px; }
+.replayControls button { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid var(--line); border-radius: 10px; background: var(--sl-surface-soft); color: var(--sl-muted); cursor: pointer; }
+.replayControls button:disabled { opacity: .35; cursor: not-allowed; }
+.replayControls button:first-child svg { transform: rotate(90deg); }
+.replayControls button:last-child svg { transform: rotate(-90deg); }
+.replayControls button svg { width: 15px; }
+.replayControls > span { height: 4px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.06); }
+.replayControls > span i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg,var(--sl-accent-strong),var(--sl-accent)); box-shadow: 0 0 12px color-mix(in srgb,var(--sl-accent) 45%,transparent); transition: width 90ms linear; }
+.replayTelemetry { margin-top: 14px; }
+.replayTelemetry > span { color: var(--sl-muted); font: 800 8px var(--font-mono); letter-spacing: .11em; text-transform: uppercase; }
+.replayTelemetry > div { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 6px; margin-top: 8px; }
+.replayTelemetry article { border: 1px solid var(--line); border-radius: 12px; background: var(--sl-surface-soft); padding: 10px; }
+.replayTelemetry small { display: block; color: var(--sl-muted); font-size: 8px; }
+.replayTelemetry strong { display: block; margin-top: 6px; color: var(--sl-text); font: 750 15px var(--font-mono); }
+.replayPrivacy { display: flex; align-items: center; gap: 7px; margin: 13px 0 0; color: var(--sl-faint); font-size: 9px; }
+.replayPrivacy svg { width: 14px; color: var(--sl-accent); }
+.replayUnavailable { display: grid; grid-template-columns: 42px minmax(0,1fr); align-items: start; gap: 12px; grid-column: 1/-1; border: 1px solid var(--line); border-radius: 20px; background: var(--sl-surface-soft); padding: 16px; }
+.replayUnavailable > svg { width: 20px; color: var(--sl-muted); }
+.replayUnavailable strong { color: var(--sl-text-soft); font-size: 12px; }
+.replayUnavailable p { margin: 6px 0 0; color: var(--sl-muted); font-size: 10px; line-height: 1.55; }
 .footworkMetricsPanel { grid-column: 1/-1; border: 1px solid var(--line); border-radius: 24px; background: linear-gradient(155deg,var(--panel-soft),var(--panel)); padding: 20px; }
 .footworkMetricsPanel > div:last-child { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 7px; margin-top: 15px; }
 .footworkMetricsPanel article { border: 1px solid var(--line); border-radius: 14px; background: var(--sl-surface-soft); padding: 12px; }
@@ -462,6 +514,7 @@
 .historyList button strong { overflow: hidden; color: var(--sl-text); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .historyList button small { margin-top: 5px; color: var(--sl-muted); font-size: 9px; }
 .historyList button svg { width: 15px; color: var(--sl-muted); }
+.historyList .historyActive { border-color: var(--sl-border-strong); background: color-mix(in srgb,var(--sl-accent) 6%,var(--sl-surface-soft)); box-shadow: inset 2px 0 0 var(--sl-accent); }
 .historyList > p { color: var(--sl-muted); font-size: 11px; line-height: 1.55; }
 .limitation { display: flex; align-items: flex-start; gap: 9px; margin: 0; border: 1px solid var(--line); border-radius: 16px; background: var(--sl-surface-soft); color: var(--sl-muted); padding: 13px 15px; font-size: 10px; line-height: 1.6; }
 .limitation svg { width: 16px; flex: 0 0 auto; color: var(--sl-accent); }
@@ -483,6 +536,7 @@
   .livePanel { display: grid; grid-template-columns: 1fr 1fr; }
   .livePanel > .panelHeading,.livePanel > .privacyLine { grid-column: 1/-1; }
   .scoreOverview { grid-template-columns: repeat(2,1fr); }
+  .replayLayout { grid-template-columns: minmax(0,1.4fr) minmax(220px,.6fr); }
   .footworkCatalog > div { grid-template-columns: repeat(3,minmax(0,1fr)); }
   .footworkMetricsPanel > div:last-child { grid-template-columns: repeat(3,1fr); }
   .diagnosticGrid { grid-template-columns: repeat(2,1fr); }
@@ -533,6 +587,11 @@
   .scoreOverview { grid-template-columns: repeat(2,1fr); }
   .scoreOverview > article,.scoreRing { min-height: 135px; }
   .reportGrid { grid-template-columns: 1fr; }
+  .replayPanel { padding: 14px; }
+  .replayLayout { grid-template-columns: 1fr; }
+  .replayStage { min-height: 54vw; }
+  .clipQueue > div { max-height: 190px; }
+  .replayTelemetry > div { grid-template-columns: repeat(2,1fr); }
   .coachingPanel,.repetitionPanel { grid-column: auto; }
   .coachingPanel { grid-template-columns: 1fr; }
   .profileBody { grid-template-columns: 1fr 1fr; }
@@ -563,6 +622,10 @@
   .cameraEmpty { padding: 24px; }
   .liveReps { grid-template-columns: repeat(3,1fr); }
   .profileBody { grid-template-columns: 1fr; }
+  .replayScores > span { min-width: 64px; padding: 6px 7px; }
+  .replayScores > span:nth-child(n+3) { display: none; }
+  .replayAngleStrip { grid-template-columns: repeat(3,1fr); }
+  .replayAngleStrip span:nth-child(n+4) { display: none; }
   .scoreOverview { grid-template-columns: 1fr 1fr; }
   .scoreOverview > article { padding: 15px; }
   .scoreOverview article > strong { font-size: 28px; }

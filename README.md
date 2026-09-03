@@ -28,7 +28,7 @@ Ask questions about the current training data and get practical explanations fro
 
 ## What it can do
 
-- Track up to four people in frame and let the athlete confirm which person should be analysed.
+- Track up to four people in frame, verify a stable target across multiple frames, and pause scoring instead of switching athletes after an occlusion.
 - Analyse racket technique drills: Smash, Backhand, Clear, Drop Shot, Drive, or automatic grouping.
 - Analyse footwork cycles such as split step, chassé, lunge, jump and landing, scissor jump, China jump, and recovery to base.
 - Use MediaPipe Pose Landmarker Lite, optional world landmarks, appearance-aware tracking, and a Web Worker when supported.
@@ -43,7 +43,7 @@ SmashLab combines local computer vision with a focused generative-AI layer. Each
 
 - **MediaPipe Pose Landmarker Lite** detects full-body landmarks directly in the browser. Optional world landmarks provide a more stable 3D-aware signal when the device supports them.
 - **On-device motion analysis** converts landmark sequences into joint angles, body extension, trunk rotation, balance, rhythm, footwork travel, and recovery signals. This keeps raw camera frames local and makes the core analysis fast enough for a phone.
-- **Multi-athlete tracking** follows up to four people using pose position, velocity, body scale, and torso appearance. The user confirms the target athlete before a set is scored, reducing accidental identity switches.
+- **Multi-athlete target lock** follows up to four people using predicted motion, body scale, landmark confidence, and a lightweight torso-appearance signature. A target must remain stable across multiple frames before it can be locked; after a longer occlusion, the same candidate must be verified repeatedly before its identity is restored. Ambiguous matches pause scoring rather than silently switching athletes. This is not face recognition.
 - **Rule-based motion classification** groups movement sequences into racket-technique and footwork drills. The classifier is intentionally evidence-aware: it can report insufficient evidence instead of claiming to see shuttle contact, racket-face angle, or flight trajectory.
 - **Web Worker processing** moves pose inference and sequence evaluation off the main UI thread when the browser supports it, keeping the Studio responsive during live capture.
 - **Retrieval-augmented generation (RAG)** selects relevant badminton coaching references before the AI Coach answers. This gives the assistant a constrained knowledge context instead of relying only on a general language model.

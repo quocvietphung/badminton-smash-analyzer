@@ -26,7 +26,21 @@ export type TrackedPose = PoseObservation & {
   trackId: number;
   bounds: PoseBounds;
   confidence: number;
+  stableFrames: number;
+  lockConfidence: number;
   observedAppearance?: PoseAppearance;
+};
+
+export type LockedTargetMemory = {
+  appearance: PoseAppearance;
+  bounds: PoseBounds;
+  lastSeenAt: number;
+};
+
+export type LockReacquisitionState = {
+  candidateTrackId: number | null;
+  consecutiveFrames: number;
+  lastObservedAt: number;
 };
 
 type TrackMemory = {
@@ -38,6 +52,7 @@ type TrackMemory = {
   bodyScale: number;
   bounds: PoseBounds;
   confidence: number;
+  stableFrames: number;
   appearance?: PoseAppearance;
   lastSeenAt: number;
 };
@@ -57,13 +72,46 @@ type DetectionDescriptor = PoseObservation & {
 type Assignment = { trackIndex: number; detectionIndex: number; cost: number };
 
 const TRACK_TTL_MS = 1_100;
+const LOCK_REACQUISITION_WINDOW_MS = 3_600;
+const LOCK_REACQUISITION_CONFIRM_FRAMES = 3;
+const MAX_REACQUISITION_FRAME_GAP_MS = 700;
+const MAX_REACQUISITION_APPEARANCE_DISTANCE = 0.42;
+const MIN_REACQUISITION_SCORE_MARGIN = 0.16;
 const MAX_MATCH_COST = 2.8;
 const UNMATCHED_TRACK_COST = 1.55;
 const UNMATCHED_DETECTION_COST = 1.35;
 const LANDMARKS_FOR_BOUNDS = [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
+export const MIN_TARGET_LOCK_FRAMES = 5;
+export const MIN_TARGET_LOCK_CONFIDENCE = 0.72;
 
 export function createMultiPoseTrackerState(): MultiPoseTrackerState {
   return { tracks: [], nextId: 1 };
+}
+
+export function createLockReacquisitionState(): LockReacquisitionState {
+  return { candidateTrackId: null, consecutiveFrames: 0, lastObservedAt: 0 };
+}
+
+function clamp01(value: number) {
+  return Math.max(0, Math.min(1, value));
+}
+
+function calculateLockConfidence(track: TrackMemory) {
+  const temporalConfidence = clamp01(track.stableFrames / (MIN_TARGET_LOCK_FRAMES + 1));
+  const landmarkConfidence = clamp01((track.confidence - 0.35) / 0.55);
+  const appearanceConfidence = track.appearance
+    ? clamp01((track.appearance.confidence - 0.2) / 0.65)
+    : 0.35;
+  return clamp01(
+    temporalConfidence * 0.5
+    + landmarkConfidence * 0.32
+    + appearanceConfidence * 0.18,
+  );
+}
+
+export function isTrackedPoseLockReady(pose: TrackedPose) {
+  return pose.stableFrames >= MIN_TARGET_LOCK_FRAMES
+    && pose.lockConfidence >= MIN_TARGET_LOCK_CONFIDENCE;
 }
 
 function averagePoint(left: PoseLandmark | undefined, right: PoseLandmark | undefined) {
@@ -198,7 +246,7 @@ export function updateMultiPoseTracker(
   let nextId = state.nextId;
   const nextTracks = activeTracks.map((track, trackIndex) => {
     const assignment = assignments.find((entry) => entry.trackIndex === trackIndex);
-    if (!assignment) return track;
+    if (!assignment) return { ...track, stableFrames: 0 };
     const detection = detections[assignment.detectionIndex];
     const elapsedSeconds = Math.max(0.016, Math.min(0.4, timestamp - track.lastSeenAt) / 1_000);
     const measuredVelocityX = (detection.bounds.centerX - track.centerX) / elapsedSeconds;
@@ -212,6 +260,9 @@ export function updateMultiPoseTracker(
       bodyScale: track.bodyScale * 0.55 + detection.bodyScale * 0.45,
       bounds: blendBounds(track.bounds, detection.bounds),
       confidence: detection.confidence,
+      stableFrames: timestamp - track.lastSeenAt <= 450
+        ? Math.min(30, track.stableFrames + 1)
+        : 1,
       appearance: blendAppearance(track.appearance, detection.appearance),
       lastSeenAt: timestamp,
     };
@@ -230,6 +281,7 @@ export function updateMultiPoseTracker(
       bodyScale: detection.bodyScale,
       bounds: detection.bounds,
       confidence: detection.confidence,
+      stableFrames: 1,
       appearance: detection.appearance,
       lastSeenAt: timestamp,
     });
@@ -249,6 +301,8 @@ export function updateMultiPoseTracker(
       ...(detection.worldLandmarks ? { worldLandmarks: detection.worldLandmarks } : {}),
       bounds: track.bounds,
       confidence: detection.confidence,
+      stableFrames: track.stableFrames,
+      lockConfidence: calculateLockConfidence(track),
       ...(track.appearance ? { appearance: track.appearance } : {}),
       ...(detection.appearance ? { observedAppearance: detection.appearance } : {}),
     });
@@ -269,4 +323,73 @@ export function hitTestTrackedPose(poses: TrackedPose[], x: number, y: number) {
       const rightDistance = Math.hypot(x - right.bounds.centerX, y - right.bounds.centerY);
       return leftDistance - rightDistance;
     })[0] ?? null;
+}
+
+export function findLockedPoseReacquisition(
+  poses: TrackedPose[],
+  memory: LockedTargetMemory,
+  timestamp: number,
+) {
+  const elapsed = timestamp - memory.lastSeenAt;
+  if (elapsed <= TRACK_TTL_MS || elapsed > LOCK_REACQUISITION_WINDOW_MS) return null;
+  if (memory.appearance.confidence < 0.4 || memory.appearance.sampleCount < 18) return null;
+
+  const ranked = poses.flatMap((pose) => {
+    const candidate = pose.observedAppearance ?? pose.appearance;
+    if (!candidate || candidate.confidence < 0.4 || candidate.sampleCount < 18 || pose.confidence < 0.45) return [];
+    const knownColorMismatch = memory.appearance.shirtColor !== "unknown"
+      && candidate.shirtColor !== "unknown"
+      && memory.appearance.shirtColor !== candidate.shirtColor;
+    if (knownColorMismatch) return [];
+
+    const appearanceScore = appearanceDistance(memory.appearance, candidate);
+    if (appearanceScore > MAX_REACQUISITION_APPEARANCE_DISTANCE) return [];
+    const spatialScale = Math.max(0.16, memory.bounds.height * 0.52, pose.bounds.height * 0.52);
+    const spatialDistance = Math.hypot(
+      memory.bounds.centerX - pose.bounds.centerX,
+      memory.bounds.centerY - pose.bounds.centerY,
+    ) / spatialScale;
+    if (spatialDistance > 1.65) return [];
+    return [{ pose, score: appearanceScore + spatialDistance * 0.12 }];
+  }).sort((left, right) => left.score - right.score);
+
+  if (!ranked.length) return null;
+  if (ranked[1] && ranked[1].score - ranked[0].score < MIN_REACQUISITION_SCORE_MARGIN) return null;
+  return ranked[0].pose;
+}
+
+export function advanceLockedPoseReacquisition(
+  poses: TrackedPose[],
+  memory: LockedTargetMemory,
+  timestamp: number,
+  previous: LockReacquisitionState,
+) {
+  const candidate = findLockedPoseReacquisition(poses, memory, timestamp);
+  if (!candidate) {
+    return {
+      state: createLockReacquisitionState(),
+      candidate: null,
+      pose: null,
+      progress: 0,
+    };
+  }
+
+  const continuesCandidate = previous.candidateTrackId === candidate.trackId
+    && timestamp >= previous.lastObservedAt
+    && timestamp - previous.lastObservedAt <= MAX_REACQUISITION_FRAME_GAP_MS;
+  const consecutiveFrames = continuesCandidate ? previous.consecutiveFrames + 1 : 1;
+  const state: LockReacquisitionState = {
+    candidateTrackId: candidate.trackId,
+    consecutiveFrames,
+    lastObservedAt: timestamp,
+  };
+  const confirmed = consecutiveFrames >= LOCK_REACQUISITION_CONFIRM_FRAMES
+    && candidate.stableFrames >= LOCK_REACQUISITION_CONFIRM_FRAMES;
+
+  return {
+    state,
+    candidate,
+    pose: confirmed ? candidate : null,
+    progress: Math.min(1, consecutiveFrames / LOCK_REACQUISITION_CONFIRM_FRAMES),
+  };
 }

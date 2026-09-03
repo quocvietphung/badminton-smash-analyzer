@@ -61,9 +61,13 @@ import {
 } from "@/lib/pose-metrics";
 import type { PoseLiteSample } from "@/lib/pose-lite-classifier";
 import {
+  advanceLockedPoseReacquisition,
+  createLockReacquisitionState,
   createMultiPoseTrackerState,
   hitTestTrackedPose,
+  isTrackedPoseLockReady,
   updateMultiPoseTracker,
+  type LockedTargetMemory,
   type PoseObservation,
   type TrackedPose,
 } from "@/lib/multi-pose-tracker";
@@ -103,6 +107,8 @@ type AthleteOption = {
   trackId: number;
   shirtColor: ShirtColor;
   position: HorizontalPosition;
+  lockConfidence: number;
+  lockReady: boolean;
 };
 type AthleteColorMemory = {
   displayed: ShirtColor;
@@ -202,12 +208,18 @@ const UI = {
     changeTarget: "Đổi người",
     collapseTarget: "Thu gọn",
     confirmTargetTitle: "Xác nhận VĐV cần phân tích",
-    confirmTargetCopy: "Sau khi xác nhận, hệ thống chỉ chấm người này và không tự chuyển sang người khác. Muốn chọn lại, hãy bấm “Đổi người”.",
-    confirmTarget: "Khóa cứng VĐV",
+    confirmTargetCopy: "Hệ thống đối chiếu chuyển động, tỷ lệ cơ thể và vùng thân áo qua nhiều khung hình trước khi khóa. Nếu mất dấu, việc chấm sẽ dừng thay vì chuyển sang người khác.",
+    confirmTarget: "Khóa VĐV đã xác minh",
     chooseAgain: "Chọn lại",
     targetUnavailable: "VĐV vừa chọn không còn trong khung. Hãy chạm chọn lại.",
-    targetLocked: "Khóa cứng VĐV",
+    targetLocked: "VĐV đã xác minh",
     targetLost: "Đang mất dấu mục tiêu · hệ thống đã tạm dừng chấm",
+    targetRecovering: "Đang xác minh lại mục tiêu",
+    targetVerifying: "Đang xác minh",
+    targetReady: "Sẵn sàng khóa",
+    lockConfidence: "Độ tin cậy khóa",
+    lockSignals: "Chuyển động · tỷ lệ cơ thể · vùng thân áo",
+    lockSafety: "Không nhận diện khuôn mặt · không tự đổi sang người khác",
     targetRequired: "Hãy chọn VĐV cần phân tích trước khi ghi set",
     detectedPeople: "người trong khung",
     engine: "Motion Engine",
@@ -305,12 +317,18 @@ const UI = {
     changeTarget: "Change athlete",
     collapseTarget: "Collapse",
     confirmTargetTitle: "Confirm analysis target",
-    confirmTargetCopy: "After confirmation, scoring stays on this athlete and never switches automatically. Use “Change athlete” to select again.",
-    confirmTarget: "Hard-lock athlete",
+    confirmTargetCopy: "Motion, body scale and torso appearance are verified across multiple frames before locking. If tracking is lost, scoring pauses instead of switching people.",
+    confirmTarget: "Lock verified athlete",
     chooseAgain: "Choose again",
     targetUnavailable: "The selected athlete is no longer visible. Please tap again.",
-    targetLocked: "Hard-locked athlete",
+    targetLocked: "Verified athlete",
     targetLost: "Target temporarily lost · scoring is paused",
+    targetRecovering: "Re-verifying target",
+    targetVerifying: "Verifying",
+    targetReady: "Ready to lock",
+    lockConfidence: "Lock confidence",
+    lockSignals: "Motion · body scale · torso appearance",
+    lockSafety: "No face recognition · never auto-switches people",
     targetRequired: "Select the athlete to analyze before recording",
     detectedPeople: "people in frame",
     engine: "Motion Engine",
@@ -408,12 +426,18 @@ const UI = {
     changeTarget: "Person wechseln",
     collapseTarget: "Einklappen",
     confirmTargetTitle: "Analyseziel bestätigen",
-    confirmTargetCopy: "Nach der Bestätigung bleibt die Bewertung auf dieser Person und wechselt nicht automatisch. Nutze „Person wechseln“, um neu auszuwählen.",
-    confirmTarget: "Athleten fest fixieren",
+    confirmTargetCopy: "Bewegung, Körpermaß und Rumpferscheinung werden über mehrere Bilder geprüft. Bei Zielverlust pausiert die Bewertung, anstatt die Person zu wechseln.",
+    confirmTarget: "Geprüften Athleten fixieren",
     chooseAgain: "Neu wählen",
     targetUnavailable: "Der ausgewählte Athlet ist nicht mehr sichtbar. Bitte erneut antippen.",
-    targetLocked: "Athlet fest fixiert",
+    targetLocked: "Athlet verifiziert",
     targetLost: "Ziel kurzzeitig verloren · Bewertung pausiert",
+    targetRecovering: "Ziel wird erneut geprüft",
+    targetVerifying: "Wird geprüft",
+    targetReady: "Bereit zum Fixieren",
+    lockConfidence: "Fixierqualität",
+    lockSignals: "Bewegung · Körpermaß · Rumpferscheinung",
+    lockSafety: "Keine Gesichtserkennung · kein automatischer Personenwechsel",
     targetRequired: "Wähle vor der Aufnahme den zu analysierenden Athleten",
     detectedPeople: "Personen im Bild",
     engine: "Motion Engine",
@@ -1078,6 +1102,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   const [visibleAthletes, setVisibleAthletes] = useState<AthleteOption[]>([]);
   const [selectedTrackId, setSelectedTrackId] = useState<number | null>(null);
   const [targetStatus, setTargetStatus] = useState<TargetStatus>("waiting");
+  const [targetRecoveryProgress, setTargetRecoveryProgress] = useState(0);
   const [targetPickerExpanded, setTargetPickerExpanded] = useState(true);
   const [pendingTarget, setPendingTarget] = useState<AthleteOption | null>(null);
   const [focusReticle, setFocusReticle] = useState<FocusReticle | null>(null);
@@ -1113,11 +1138,15 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   const trackedPosesRef = useRef<TrackedPose[]>([]);
   const selectedTrackIdRef = useRef<number | null>(null);
   const targetStatusRef = useRef<TargetStatus>("waiting");
+  const targetRecoveryProgressRef = useRef(0);
+  const lockReacquisitionRef = useRef(createLockReacquisitionState());
   const visibleAthletesSignatureRef = useRef("");
   const appearanceCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const selectedAppearanceRef = useRef<PoseAppearance | undefined>(undefined);
+  const lockedTargetMemoryRef = useRef<LockedTargetMemory | null>(null);
   const pendingTrackIdRef = useRef<number | null>(null);
-  const pendingAppearanceRef = useRef<PoseAppearance | undefined>(undefined);
+  const lastFrameTimestampRef = useRef(0);
+  const targetConfirmDialogRef = useRef<HTMLDivElement>(null);
   const athletePositionsRef = useRef(new Map<number, HorizontalPosition>());
   const athleteColorsRef = useRef(new Map<number, AthleteColorMemory>());
   const memoryRef = useRef<PoseFrameMemory | null>(null);
@@ -1137,6 +1166,12 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
 
   const latest = movements.at(-1) ?? null;
   const selectedAthleteOption = visibleAthletes.find((athlete) => athlete.trackId === selectedTrackId) ?? null;
+  const pendingTargetLive = pendingTarget === null
+    ? null
+    : visibleAthletes.find((athlete) => athlete.trackId === pendingTarget.trackId) ?? null;
+  const pendingTargetDisplay = pendingTargetLive ?? pendingTarget;
+  const pendingTargetVisible = pendingTargetLive !== null;
+  const pendingTargetReady = pendingTargetLive?.lockReady ?? false;
   const activeSummary = useMemo(
     () => summary ?? (movements.length ? createSummary(movements, language) : null),
     [language, movements, summary],
@@ -1323,23 +1358,45 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     lastContactRef.current = -10_000;
   }, []);
 
-  const selectAthlete = useCallback((trackId: number, fallbackAppearance?: PoseAppearance) => {
+  const resetLockRecovery = useCallback(() => {
+    lockReacquisitionRef.current = createLockReacquisitionState();
+    if (targetRecoveryProgressRef.current !== 0) {
+      targetRecoveryProgressRef.current = 0;
+      setTargetRecoveryProgress(0);
+    }
+  }, []);
+
+  const selectAthlete = useCallback((trackId: number) => {
     if (recordingRef.current) return;
     const target = trackedPosesRef.current.find((pose) => pose.trackId === trackId);
+    if (!target) {
+      setCurrentMessage(copy.targetUnavailable);
+      return;
+    }
+    if (!isTrackedPoseLockReady(target)) {
+      setCurrentMessage(copy.targetVerifying);
+      return;
+    }
+    const appearance = target.appearance ?? target.observedAppearance;
     selectedTrackIdRef.current = trackId;
     pendingTrackIdRef.current = null;
-    pendingAppearanceRef.current = undefined;
     setPendingTarget(null);
     setFocusReticle(null);
-    selectedAppearanceRef.current = target?.observedAppearance ?? target?.appearance ?? fallbackAppearance;
+    selectedAppearanceRef.current = appearance;
+    lockedTargetMemoryRef.current = appearance ? {
+      appearance,
+      bounds: target.bounds,
+      lastSeenAt: lastFrameTimestampRef.current,
+    } : null;
     targetStatusRef.current = "locked";
     setSelectedTrackId(trackId);
     setTargetStatus("locked");
     setAthleteDetected(true);
     setTargetPickerExpanded(false);
+    resetLockRecovery();
     resetTargetMotion();
     setCurrentMessage(copy.notRecording);
-  }, [copy.notRecording, resetTargetMotion]);
+  }, [copy.notRecording, copy.targetUnavailable, copy.targetVerifying, resetLockRecovery, resetTargetMotion]);
 
   const requestAthleteSelection = useCallback((trackId: number) => {
     if (recordingRef.current || selectedTrackIdRef.current !== null) return;
@@ -1352,15 +1409,15 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
       trackId,
       shirtColor: pose.appearance?.shirtColor ?? "unknown",
       position: horizontalPosition(pose.bounds.centerX),
+      lockConfidence: Math.round(pose.lockConfidence * 100),
+      lockReady: isTrackedPoseLockReady(pose),
     };
     pendingTrackIdRef.current = trackId;
-    pendingAppearanceRef.current = pose.observedAppearance ?? pose.appearance;
     setPendingTarget(option);
   }, [copy.targetUnavailable, visibleAthletes]);
 
   const cancelAthleteSelection = useCallback(() => {
     pendingTrackIdRef.current = null;
-    pendingAppearanceRef.current = undefined;
     setPendingTarget(null);
     setFocusReticle(null);
   }, []);
@@ -1369,44 +1426,80 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     if (recordingRef.current) return;
     selectedTrackIdRef.current = null;
     selectedAppearanceRef.current = undefined;
+    lockedTargetMemoryRef.current = null;
     pendingTrackIdRef.current = null;
-    pendingAppearanceRef.current = undefined;
     setPendingTarget(null);
     setFocusReticle(null);
     setSelectedTrackId(null);
     setAthleteDetected(false);
+    resetLockRecovery();
     const nextStatus: TargetStatus = trackedPosesRef.current.length > 0 ? "selecting" : "waiting";
     targetStatusRef.current = nextStatus;
     setTargetStatus(nextStatus);
     setTargetPickerExpanded(true);
     resetTargetMotion();
     setCurrentMessage(copy.targetRequired);
-  }, [copy.targetRequired, resetTargetMotion]);
+  }, [copy.targetRequired, resetLockRecovery, resetTargetMotion]);
 
   const confirmAthleteSelection = useCallback(() => {
     if (!pendingTarget) return;
-    const stillVisible = trackedPosesRef.current.some((pose) => pose.trackId === pendingTarget.trackId);
-    const stillTracked = trackerRef.current.tracks.some((track) => track.id === pendingTarget.trackId);
-    if (!stillVisible && !stillTracked) {
+    const target = trackedPosesRef.current.find((pose) => pose.trackId === pendingTarget.trackId);
+    if (!target) {
       cancelAthleteSelection();
       setCurrentMessage(copy.targetUnavailable);
       return;
     }
-    selectAthlete(pendingTarget.trackId, pendingAppearanceRef.current);
-  }, [cancelAthleteSelection, copy.targetUnavailable, pendingTarget, selectAthlete]);
+    if (!isTrackedPoseLockReady(target)) {
+      setCurrentMessage(copy.targetVerifying);
+      return;
+    }
+    selectAthlete(pendingTarget.trackId);
+  }, [cancelAthleteSelection, copy.targetUnavailable, copy.targetVerifying, pendingTarget, selectAthlete]);
 
   useEffect(() => {
     if (!pendingTarget) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusTimer = window.setTimeout(() => {
+      const buttons = targetConfirmDialogRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)");
+      buttons?.[buttons.length - 1]?.focus();
+    }, 0);
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") cancelAthleteSelection();
+      if (event.key === "Escape") {
+        cancelAthleteSelection();
+        return;
+      }
+      if (event.key !== "Tab" || !targetConfirmDialogRef.current) return;
+      const focusable = [...targetConfirmDialogRef.current.querySelectorAll<HTMLElement>(
+        "button:not(:disabled), [href], [tabindex]:not([tabindex='-1'])",
+      )];
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (!focusable.includes(document.activeElement as HTMLElement)) {
+        event.preventDefault();
+        first.focus();
+        return;
+      }
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.removeEventListener("keydown", handleKeyDown);
+      previousFocus?.focus();
+    };
   }, [cancelAthleteSelection, pendingTarget]);
 
   const processPoses = useCallback((poses: VisionWorkerPose[], now: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    lastFrameTimestampRef.current = now;
     let observations: PoseObservation[] = poses;
     const video = videoRef.current;
     if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
@@ -1437,20 +1530,47 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
         trackId: pose.trackId,
         shirtColor: stableShirtColor(athleteColorsRef.current, pose.trackId, detectedColor),
         position,
+        lockConfidence: Math.round(pose.lockConfidence * 100),
+        lockReady: isTrackedPoseLockReady(pose),
       };
     });
     const signature = athleteOptions
-      .map((option) => `${option.trackId}:${option.shirtColor}:${option.position}`)
+      .map((option) => `${option.trackId}:${option.shirtColor}:${option.position}:${option.lockConfidence}:${option.lockReady}`)
       .join(",");
     if (signature !== visibleAthletesSignatureRef.current) {
       visibleAthletesSignatureRef.current = signature;
       setVisibleAthletes(athleteOptions);
     }
 
-    const targetId = selectedTrackIdRef.current;
+    let targetId = selectedTrackIdRef.current;
     let pose = targetId === null
       ? null
       : tracked.poses.find((entry) => entry.trackId === targetId) ?? null;
+    const retainedTarget = targetId !== null
+      && tracked.state.tracks.some((track) => track.id === targetId);
+    if (!pose && targetId !== null && !retainedTarget && lockedTargetMemoryRef.current) {
+      const recovery = advanceLockedPoseReacquisition(
+        tracked.poses,
+        lockedTargetMemoryRef.current,
+        now,
+        lockReacquisitionRef.current,
+      );
+      lockReacquisitionRef.current = recovery.state;
+      const nextProgress = Math.round(recovery.progress * 100);
+      if (nextProgress !== targetRecoveryProgressRef.current) {
+        targetRecoveryProgressRef.current = nextProgress;
+        setTargetRecoveryProgress(nextProgress);
+      }
+      if (recovery.pose) {
+        targetId = recovery.pose.trackId;
+        pose = recovery.pose;
+        selectedTrackIdRef.current = recovery.pose.trackId;
+        setSelectedTrackId(recovery.pose.trackId);
+        resetLockRecovery();
+      }
+    } else if (pose || targetId === null) {
+      resetLockRecovery();
+    }
     const selectedAppearance = selectedAppearanceRef.current;
     const currentAppearance = pose?.observedAppearance ?? pose?.appearance;
     if (pose && selectedAppearance && currentAppearance) {
@@ -1461,6 +1581,13 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
       if (appearanceIdentityConflict(selectedAppearance, currentAppearance, alternatives)) pose = null;
     } else if (pose && !selectedAppearance && currentAppearance) {
       selectedAppearanceRef.current = currentAppearance;
+    }
+    if (pose && selectedAppearanceRef.current) {
+      lockedTargetMemoryRef.current = {
+        appearance: selectedAppearanceRef.current,
+        bounds: pose.bounds,
+        lastSeenAt: now,
+      };
     }
     const visiblePoses = targetId === null ? tracked.poses : pose ? [pose] : [];
     drawTrackedPoses(
@@ -1588,7 +1715,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
         registerMovement(windowSamples, analysis.metrics.dominantSide);
       }
     }
-  }, [copy.footworkWaiting, copy.liveWaiting, copy.notRecording, copy.targetLost, language, registerMovement, resetTargetMotion]);
+  }, [copy.footworkWaiting, copy.liveWaiting, copy.notRecording, copy.targetLost, language, registerMovement, resetLockRecovery, resetTargetMotion]);
 
   useEffect(() => { processFrameRef.current = processPoses; }, [processPoses]);
 
@@ -1673,10 +1800,10 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     trackedPosesRef.current = [];
     selectedTrackIdRef.current = null;
     pendingTrackIdRef.current = null;
-    pendingAppearanceRef.current = undefined;
     setPendingTarget(null);
     setFocusReticle(null);
     selectedAppearanceRef.current = undefined;
+    lockedTargetMemoryRef.current = null;
     athletePositionsRef.current.clear();
     athleteColorsRef.current.clear();
     targetStatusRef.current = "waiting";
@@ -1686,6 +1813,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     setTargetStatus("waiting");
     setTargetPickerExpanded(true);
     setAthleteDetected(false);
+    resetLockRecovery();
     resetTargetMotion();
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -1729,7 +1857,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
         ? error.message
         : systemCopy.cameraUnavailable);
     }
-  }, [copy.notRecording, initializeWorker, resetTargetMotion, startLoop, systemCopy.cameraUnavailable]);
+  }, [copy.notRecording, initializeWorker, resetLockRecovery, resetTargetMotion, startLoop, systemCopy.cameraUnavailable]);
 
   const stopCamera = useCallback(() => {
     runningRef.current = false;
@@ -1747,10 +1875,10 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     trackedPosesRef.current = [];
     selectedTrackIdRef.current = null;
     pendingTrackIdRef.current = null;
-    pendingAppearanceRef.current = undefined;
     setPendingTarget(null);
     setFocusReticle(null);
     selectedAppearanceRef.current = undefined;
+    lockedTargetMemoryRef.current = null;
     athletePositionsRef.current.clear();
     athleteColorsRef.current.clear();
     targetStatusRef.current = "waiting";
@@ -1761,8 +1889,9 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     setTargetPickerExpanded(true);
     setAthleteDetected(false);
     setStatus("idle");
+    resetLockRecovery();
     resetTargetMotion();
-  }, [resetTargetMotion]);
+  }, [resetLockRecovery, resetTargetMotion]);
 
   const resetSet = useCallback((nextSource: AnalysisSource = "none") => {
     movementsRef.current = [];
@@ -2022,12 +2151,14 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
             <div className={styles.targetSummary}>
               <span>{copy.targetLabel}</span>
               <strong>{targetStatus === "locked" && selectedTrackId !== null
-                ? `${copy.targetLocked} #${selectedTrackId}${selectedAthleteOption ? ` · ${shirtColorLabel(selectedAthleteOption.shirtColor, language)}` : ""}`
-                : targetStatus === "lost" ? copy.targetLost : copy.targetSelect}</strong>
+                ? <><ShieldCheck aria-hidden="true" />{`${copy.targetLocked} #${selectedTrackId}${selectedAthleteOption ? ` · ${shirtColorLabel(selectedAthleteOption.shirtColor, language)}` : ""}`}</>
+                : targetStatus === "lost"
+                  ? targetRecoveryProgress > 0 ? `${copy.targetRecovering} · ${targetRecoveryProgress}%` : copy.targetLost
+                  : copy.targetSelect}</strong>
               <small>{selectedTrackId === null && targetPickerExpanded
                 ? `${visibleAthletes.length} ${copy.detectedPeople} · ${copy.targetGuide}`
                 : selectedAthleteOption
-                  ? positionLabel(selectedAthleteOption.position, language)
+                  ? `${positionLabel(selectedAthleteOption.position, language)} · ${copy.lockConfidence} ${selectedAthleteOption.lockConfidence}%`
                   : `${visibleAthletes.length} ${copy.detectedPeople}`}</small>
               {(targetStatus === "locked" || targetStatus === "lost") && !recording ? <button
                 type="button"
@@ -2039,11 +2170,11 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
               {visibleAthletes.map((athlete) => <button
                 type="button"
                 key={athlete.trackId}
-                className={selectedTrackId === athlete.trackId ? styles.targetActive : ""}
+                className={pendingTarget?.trackId === athlete.trackId ? styles.targetActive : ""}
                 disabled={recording}
                 onClick={() => requestAthleteSelection(athlete.trackId)}
                 aria-label={`${language === "vi" ? "Khóa VĐV" : language === "de" ? "Athleten fixieren" : "Lock athlete"} ${athlete.trackId}, ${shirtColorLabel(athlete.shirtColor, language)}, ${positionLabel(athlete.position, language)}`}
-                aria-pressed={selectedTrackId === athlete.trackId}
+                aria-pressed={pendingTarget?.trackId === athlete.trackId}
               >
                 <i
                   className={styles.shirtSwatch}
@@ -2053,35 +2184,55 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
                 <span className={styles.targetOptionCopy}>
                   <strong>{language === "vi" ? "VĐV" : language === "de" ? "Athlet" : "Athlete"} {athlete.trackId}</strong>
                   <small>{shirtColorLabel(athlete.shirtColor, language)} · {positionLabel(athlete.position, language)}</small>
+                  <em className={athlete.lockReady ? styles.targetOptionReady : ""}>
+                    {athlete.lockReady ? copy.targetReady : `${copy.targetVerifying} · ${athlete.lockConfidence}%`}
+                  </em>
                 </span>
-                {selectedTrackId === athlete.trackId ? <Check aria-hidden="true" /> : null}
+                {pendingTarget?.trackId === athlete.trackId ? <Check aria-hidden="true" /> : null}
               </button>)}
             </div> : null}
           </div> : null}
-          {pendingTarget ? <div className={styles.targetConfirmBackdrop}>
+          {pendingTarget ? <div
+            className={styles.targetConfirmBackdrop}
+            onPointerDown={(event) => {
+              if (event.target === event.currentTarget) cancelAthleteSelection();
+            }}
+          >
             <div
+              ref={targetConfirmDialogRef}
               className={styles.targetConfirmDialog}
               role="dialog"
               aria-modal="true"
               aria-labelledby="target-confirm-title"
+              aria-describedby="target-confirm-copy"
             >
               <span>{copy.targetLabel}</span>
               <h3 id="target-confirm-title">{copy.confirmTargetTitle}</h3>
-              <p>{copy.confirmTargetCopy}</p>
+              <p id="target-confirm-copy">{pendingTargetVisible ? copy.confirmTargetCopy : copy.targetUnavailable}</p>
               <div className={styles.targetConfirmAthlete}>
                 <i
                   className={styles.shirtSwatch}
-                  style={{ "--shirt-color": shirtColorCss(pendingTarget.shirtColor) } as CSSProperties}
+                  style={{ "--shirt-color": shirtColorCss(pendingTargetDisplay?.shirtColor ?? pendingTarget.shirtColor) } as CSSProperties}
                   aria-hidden="true"
                 />
                 <div>
                   <strong>{language === "vi" ? "VĐV" : language === "de" ? "Athlet" : "Athlete"} {pendingTarget.trackId}</strong>
-                  <small>{shirtColorLabel(pendingTarget.shirtColor, language)} · {positionLabel(pendingTarget.position, language)}</small>
+                  <small>{shirtColorLabel(pendingTargetDisplay?.shirtColor ?? pendingTarget.shirtColor, language)} · {positionLabel(pendingTargetDisplay?.position ?? pendingTarget.position, language)}</small>
                 </div>
+                <ShieldCheck aria-hidden="true" />
+              </div>
+              <div className={styles.targetConfidence}>
+                <div><span>{copy.lockConfidence}</span><strong>{pendingTargetDisplay?.lockConfidence ?? 0}%</strong></div>
+                <span aria-hidden="true"><i style={{ width: `${pendingTargetDisplay?.lockConfidence ?? 0}%` }} /></span>
+                <small>{pendingTargetReady ? copy.targetReady : copy.targetVerifying}</small>
+              </div>
+              <div className={styles.targetLockDetails}>
+                <span><CircleDashed aria-hidden="true" />{copy.lockSignals}</span>
+                <span><ShieldCheck aria-hidden="true" />{copy.lockSafety}</span>
               </div>
               <div className={styles.targetConfirmActions}>
                 <button type="button" onClick={cancelAthleteSelection}>{copy.chooseAgain}</button>
-                <button type="button" onClick={confirmAthleteSelection}><UserRoundCheck />{copy.confirmTarget}</button>
+                <button type="button" disabled={!pendingTargetVisible || !pendingTargetReady} onClick={confirmAthleteSelection}><UserRoundCheck />{copy.confirmTarget}</button>
               </div>
             </div>
           </div> : null}

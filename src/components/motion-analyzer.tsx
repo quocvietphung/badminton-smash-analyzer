@@ -63,9 +63,11 @@ import type { PoseLiteSample } from "@/lib/pose-lite-classifier";
 import {
   advanceLockedPoseReacquisition,
   createLockReacquisitionState,
+  createLockedTargetMemory,
   createMultiPoseTrackerState,
   hitTestTrackedPose,
   isTrackedPoseLockReady,
+  updateLockedTargetMemory,
   updateMultiPoseTracker,
   type LockedTargetMemory,
   type PoseObservation,
@@ -1383,11 +1385,10 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     setPendingTarget(null);
     setFocusReticle(null);
     selectedAppearanceRef.current = appearance;
-    lockedTargetMemoryRef.current = appearance ? {
-      appearance,
-      bounds: target.bounds,
-      lastSeenAt: lastFrameTimestampRef.current,
-    } : null;
+    lockedTargetMemoryRef.current = createLockedTargetMemory(
+      target,
+      lastFrameTimestampRef.current,
+    );
     targetStatusRef.current = "locked";
     setSelectedTrackId(trackId);
     setTargetStatus("locked");
@@ -1583,11 +1584,9 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
       selectedAppearanceRef.current = currentAppearance;
     }
     if (pose && selectedAppearanceRef.current) {
-      lockedTargetMemoryRef.current = {
-        appearance: selectedAppearanceRef.current,
-        bounds: pose.bounds,
-        lastSeenAt: now,
-      };
+      lockedTargetMemoryRef.current = lockedTargetMemoryRef.current
+        ? updateLockedTargetMemory(lockedTargetMemoryRef.current, pose, now)
+        : createLockedTargetMemory(pose, now);
     }
     const visiblePoses = targetId === null ? tracked.poses : pose ? [pose] : [];
     drawTrackedPoses(

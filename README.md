@@ -43,13 +43,24 @@ SmashLab combines local computer vision with a focused generative-AI layer. Each
 
 - **MediaPipe Pose Landmarker Lite** detects full-body landmarks directly in the browser. Optional world landmarks provide a more stable 3D-aware signal when the device supports them.
 - **On-device motion analysis** converts landmark sequences into joint angles, body extension, trunk rotation, balance, rhythm, footwork travel, and recovery signals. This keeps raw camera frames local and makes the core analysis fast enough for a phone.
-- **Multi-athlete target lock** follows up to four people using predicted motion, body scale, landmark confidence, and a lightweight torso-appearance signature. A target must remain stable across multiple frames before it can be locked; after a longer occlusion, the same candidate must be verified repeatedly before its identity is restored. Ambiguous matches pause scoring rather than silently switching athletes. This is not face recognition.
+- **Multi-athlete target lock** follows up to four people with a lightweight MOT pipeline inspired by SORT, ByteTrack, and OC-SORT. It combines Kalman motion prediction, observation-direction consistency, two-stage confidence association, body scale, and a bounded torso-appearance gallery. After an occlusion, observation-centric re-updates correct stale velocity before tracking continues. A target must remain stable across multiple frames before it can be locked, and ambiguous recovery pauses scoring rather than silently switching athletes. This is not face recognition.
 - **Rule-based motion classification** groups movement sequences into racket-technique and footwork drills. The classifier is intentionally evidence-aware: it can report insufficient evidence instead of claiming to see shuttle contact, racket-face angle, or flight trajectory.
 - **Web Worker processing** moves pose inference and sequence evaluation off the main UI thread when the browser supports it, keeping the Studio responsive during live capture.
 - **Retrieval-augmented generation (RAG)** selects relevant badminton coaching references before the AI Coach answers. This gives the assistant a constrained knowledge context instead of relying only on a general language model.
 - **Azure OpenAI GPT-4.1 mini** turns reduced session metrics into practical coaching explanations, priorities, and practice suggestions. The model receives structured analysis data and text questions, not video frames.
 
 This hybrid design uses deterministic computer-vision logic for measurable movement signals and generative AI for explanation. It keeps the safety-critical product boundaries visible: the AI Coach explains movement evidence, while it does not invent shuttle speed, contact timing, or trajectory data.
+
+## Target-lock methodology
+
+The browser tracker adapts established multi-object tracking ideas to a small badminton scene without adding a server-side video pipeline or a heavyweight person-identification model:
+
+- **Global association:** detections and active tracks are matched as one assignment problem, using predicted position, body scale, box overlap, appearance, and motion-direction costs.
+- **ByteTrack-inspired confidence stages:** reliable pose detections are associated first; lower-confidence observations may recover an existing track but cannot create an unverified athlete identity.
+- **OC-SORT-inspired motion handling:** recent observations provide a direction-consistency signal, while virtual observations re-update the Kalman state after short occlusions and reduce stale-velocity errors.
+- **Conservative identity recovery:** a small appearance gallery and the last observed trajectory rank candidates after a longer loss. Recovery requires a unique margin and three consecutive confirmations; otherwise scoring remains paused.
+
+These are product-focused adaptations of ideas described in [SORT](https://arxiv.org/abs/1602.00763), [ByteTrack](https://arxiv.org/abs/2110.06864), and [OC-SORT](https://openaccess.thecvf.com/content/CVPR2023/html/Cao_Observation-Centric_SORT_Rethinking_SORT_for_Robust_Multi-Object_Tracking_CVPR_2023_paper.html), not a claim of reproducing their benchmark results. The repository tests identity continuity across reordered detections, same-shirt crossings, confidence drops, occlusion recovery, and ambiguous re-entry.
 
 ## Important scope
 

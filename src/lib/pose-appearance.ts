@@ -155,7 +155,11 @@ export function blendAppearance(
   if (!previous) return current;
   const histogram = previous.histogram.map((value, index) =>
     value * (1 - currentWeight) + (current.histogram[index] ?? 0) * currentWeight);
-  return appearanceFromHistogram(histogram, Math.max(previous.sampleCount, current.sampleCount));
+  const sampleCount = Math.max(previous.sampleCount, current.sampleCount);
+  return appearanceFromHistogram(
+    histogram.map((value) => value * sampleCount),
+    sampleCount,
+  );
 }
 
 export function horizontalPosition(

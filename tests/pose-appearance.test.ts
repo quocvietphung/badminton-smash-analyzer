@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   appearanceIdentityConflict,
   appearanceDistance,
+  blendAppearance,
   extractTorsoAppearance,
   horizontalPosition,
 } from "../src/lib/pose-appearance.ts";
@@ -54,6 +55,17 @@ test("appearance histogram separates different shirts", () => {
   const blue = extractTorsoAppearance(solidFrame(30, 100, 225), 80, 80, landmarks())!;
   assert.ok(appearanceDistance(red, secondRed) < 0.2);
   assert.ok(appearanceDistance(red, blue) > 0.8);
+});
+
+test("keeps a normalized appearance signature stable across repeated blends", () => {
+  const red = appearance(0, "red");
+  let blended = red;
+  for (let frame = 0; frame < 20; frame += 1) {
+    blended = blendAppearance(blended, red)!;
+  }
+  assert.equal(blended.shirtColor, "red");
+  assert.equal(blended.confidence, 1);
+  assert.ok(Math.abs(blended.histogram.reduce((sum, value) => sum + value, 0) - 1) < 1e-9);
 });
 
 test("describes horizontal target position", () => {

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   advanceLockedPoseReacquisition,
   createLockReacquisitionState,
+  createLockedTargetMemory,
   createMultiPoseTrackerState,
   findLockedPoseReacquisition,
   hitTestTrackedPose,
@@ -17,12 +18,18 @@ function appearance(bin: number, shirtColor: ShirtColor): PoseAppearance {
   return { histogram, shirtColor, confidence: 0.9, sampleCount: 120 };
 }
 
-function pose(centerX: number, centerY = 0.54, scale = 1, shirt?: PoseAppearance) {
+function pose(
+  centerX: number,
+  centerY = 0.54,
+  scale = 1,
+  shirt?: PoseAppearance,
+  visibility = 1,
+) {
   const point = (x: number, y: number) => ({
     x: centerX + (x - 0.5) * scale,
     y: centerY + (y - 0.54) * scale,
     z: 0,
-    visibility: 1,
+    visibility,
   });
   const landmarks = Array.from({ length: 33 }, () => point(0.5, 0.54));
   landmarks[0] = point(0.5, 0.15);
@@ -95,6 +102,55 @@ test("uses shirt appearance to avoid an ID swap when athletes cross", () => {
 
   assert.equal(result.poses.find((entry) => entry.observedAppearance?.shirtColor === "red")?.trackId, redId);
   assert.equal(result.poses.find((entry) => entry.observedAppearance?.shirtColor === "blue")?.trackId, blueId);
+});
+
+test("uses observation momentum to keep same-looking athletes stable through a crossing", () => {
+  const red = appearance(0, "red");
+  let result = updateMultiPoseTracker(
+    createMultiPoseTrackerState(),
+    [pose(0.3, 0.54, 1, red), pose(0.7, 0.54, 1, red)],
+    0,
+  );
+  const movingRightId = result.poses.find((entry) => entry.landmarks[23].x < 0.5)!.trackId;
+  const movingLeftId = result.poses.find((entry) => entry.landmarks[23].x > 0.5)!.trackId;
+
+  result = updateMultiPoseTracker(result.state, [pose(0.38, 0.54, 1, red), pose(0.62, 0.54, 1, red)], 40);
+  result = updateMultiPoseTracker(result.state, [pose(0.46, 0.54, 1, red), pose(0.54, 0.54, 1, red)], 80);
+  result = updateMultiPoseTracker(result.state, [pose(0.42, 0.54, 1, red), pose(0.58, 0.54, 1, red)], 120);
+
+  assert.equal(result.poses.find((entry) => entry.landmarks[23].x > 0.5)?.trackId, movingRightId);
+  assert.equal(result.poses.find((entry) => entry.landmarks[23].x < 0.5)?.trackId, movingLeftId);
+});
+
+test("associates a low-confidence pose to an existing track without creating a weak new track", () => {
+  let result = updateMultiPoseTracker(createMultiPoseTrackerState(), [pose(0.4)], 0);
+  const trackId = result.poses[0].trackId;
+
+  result = updateMultiPoseTracker(result.state, [pose(0.43, 0.54, 1, undefined, 0.44)], 40);
+  assert.equal(result.poses[0].trackId, trackId);
+
+  const weakOnly = updateMultiPoseTracker(
+    createMultiPoseTrackerState(),
+    [pose(0.7, 0.54, 1, undefined, 0.44)],
+    0,
+  );
+  assert.equal(weakOnly.poses.length, 0);
+  assert.equal(weakOnly.state.tracks.length, 0);
+});
+
+test("re-updates motion after an occlusion instead of retaining stale velocity", () => {
+  let result = updateMultiPoseTracker(createMultiPoseTrackerState(), [pose(0.3)], 0);
+  const trackId = result.poses[0].trackId;
+  result = updateMultiPoseTracker(result.state, [pose(0.39)], 50);
+  result = updateMultiPoseTracker(result.state, [], 180);
+  result = updateMultiPoseTracker(result.state, [pose(0.34)], 420);
+
+  const recoveredTrack = result.state.tracks.find((track) => track.id === trackId)!;
+  assert.equal(result.poses[0].trackId, trackId);
+  assert.ok(recoveredTrack.velocityX < 0);
+
+  result = updateMultiPoseTracker(result.state, [pose(0.28)], 470);
+  assert.equal(result.poses[0].trackId, trackId);
 });
 
 test("keeps one athlete ID when screen color and pose fluctuate", () => {
@@ -179,6 +235,23 @@ test("reacquires a uniquely matching locked athlete after the tracker ID expires
 
   assert.notEqual(result.poses[0].trackId, original.trackId);
   assert.equal(recovered?.trackId, result.poses[0].trackId);
+});
+
+test("uses locked trajectory direction to recover the correct same-shirt athlete", () => {
+  const red = appearance(0, "red");
+  let result = updateMultiPoseTracker(createMultiPoseTrackerState(), [pose(0.3, 0.54, 1, red)], 0);
+  result = updateMultiPoseTracker(result.state, [pose(0.36, 0.54, 1, red)], 80);
+  result = updateMultiPoseTracker(result.state, [pose(0.42, 0.54, 1, red)], 160);
+  const memory = createLockedTargetMemory(result.poses[0], 160)!;
+  const candidates = updateMultiPoseTracker(
+    createMultiPoseTrackerState(),
+    [pose(0.14, 0.54, 1, red), pose(0.7, 0.54, 1, red)],
+    1_500,
+  ).poses;
+
+  const recovered = findLockedPoseReacquisition(candidates, memory, 1_500);
+  assert.ok(recovered);
+  assert.ok(recovered.landmarks[23].x > 0.5);
 });
 
 test("does not guess when two athletes are equally plausible lock matches", () => {

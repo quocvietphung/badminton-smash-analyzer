@@ -285,15 +285,18 @@
 .targetPickerCompact .targetSummary > strong,.targetPickerCompact .targetChange { margin-top: 0; }
 .targetSummary { display: flex; min-width: 210px; flex: 1 1 210px; flex-direction: column; }
 .targetSummary > span { color: #66efc5; font: 800 8px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; }
-.targetSummary > strong { margin-top: 4px; overflow: hidden; color: #effbf7; font-size: 11px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.targetSummary > strong { display: inline-flex; margin-top: 4px; overflow: hidden; align-items: center; gap: 6px; color: #effbf7; font-size: 11px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.targetSummary > strong svg { width: 14px; min-width: 14px; color: #68f5ca; filter: drop-shadow(0 0 8px rgba(104,245,202,.34)); }
 .targetSummary > small { margin-top: 4px; color: #82958f; font-size: 8px; line-height: 1.4; }
 .targetChange { align-self: flex-start; min-height: 27px; margin-top: 7px; border: 1px solid rgba(104,245,202,.3); border-radius: 9px; background: rgba(104,245,202,.08); color: #8ff7d7; padding: 0 9px; font: 800 8px var(--font-mono); letter-spacing: .04em; cursor: pointer; }
 .targetChange:hover { border-color: rgba(104,245,202,.55); background: rgba(104,245,202,.14); }
 .targetButtons { display: grid; min-width: min(380px,50vw); grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px; }
-.targetButtons button { display: grid; min-width: 0; min-height: 46px; grid-template-columns: 22px minmax(0,1fr) 15px; align-items: center; gap: 8px; border: 1px solid rgba(255,255,255,.13); border-radius: 12px; background: rgba(255,255,255,.045); color: #b6c8c2; padding: 7px 9px; text-align: left; cursor: pointer; }
+.targetButtons button { display: grid; min-width: 0; min-height: 59px; grid-template-columns: 22px minmax(0,1fr) 15px; align-items: center; gap: 8px; border: 1px solid rgba(255,255,255,.13); border-radius: 13px; background: linear-gradient(145deg,rgba(255,255,255,.055),rgba(255,255,255,.025)); color: #b6c8c2; padding: 8px 9px; text-align: left; cursor: pointer; }
 .targetOptionCopy { display: flex; min-width: 0; flex-direction: column; }
 .targetOptionCopy strong { overflow: hidden; color: #effbf7; font-size: 10px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
 .targetOptionCopy small { margin-top: 3px; overflow: hidden; color: #82958f; font-size: 8px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.targetOptionCopy em { width: fit-content; margin-top: 6px; border-radius: 999px; background: rgba(246,211,101,.1); color: #e5ca76; padding: 3px 6px; font: 750 7px var(--font-mono); letter-spacing: .02em; }
+.targetOptionCopy .targetOptionReady { background: rgba(104,245,202,.12); color: #86f7d5; }
 .shirtSwatch { position: relative; width: 20px; height: 20px; border: 1px solid rgba(255,255,255,.22); border-radius: 7px 7px 9px 9px; background: var(--shirt-color); box-shadow: inset 0 0 0 2px rgba(0,0,0,.12),0 4px 12px color-mix(in srgb,var(--shirt-color) 25%,transparent); }
 .shirtSwatch::before,.shirtSwatch::after { position: absolute; top: 1px; width: 7px; height: 7px; border-radius: 5px; background: var(--shirt-color); content: ""; }
 .shirtSwatch::before { left: -4px; transform: rotate(24deg); }
@@ -311,19 +314,31 @@
 .focusReticle::after { width: 2px; height: 12px; }
 .focusReticle i { position: absolute; inset: 6px; border: 1px solid rgba(246,211,101,.35); border-radius: 7px; }
 @keyframes focus-lock { from { opacity: .2; transform: translate(-50%,-50%) scale(1.45); } 60% { opacity: 1; transform: translate(-50%,-50%) scale(.92); } to { transform: translate(-50%,-50%) scale(1); } }
-.targetConfirmBackdrop { position: absolute; z-index: 14; inset: 0; display: grid; place-items: center; background: transparent; padding: 20px; }
-.targetConfirmDialog { width: min(100%,430px); border: 1px solid rgba(112,247,206,.28); border-radius: 22px; background: linear-gradient(155deg,rgba(8,28,29,.98),rgba(3,14,16,.98)); padding: 22px; box-shadow: 0 28px 80px rgba(0,0,0,.48),inset 0 1px 0 rgba(255,255,255,.05); }
+.targetConfirmBackdrop { position: absolute; z-index: 14; inset: 0; display: grid; place-items: center; background: rgba(0,8,8,.58); padding: 20px; backdrop-filter: blur(5px); }
+.targetConfirmDialog { width: min(100%,450px); border: 1px solid rgba(112,247,206,.3); border-radius: 24px; background: radial-gradient(circle at 90% 5%,rgba(104,245,202,.11),transparent 32%),linear-gradient(155deg,rgba(8,28,29,.985),rgba(3,14,16,.985)); padding: 24px; box-shadow: 0 32px 90px rgba(0,0,0,.54),inset 0 1px 0 rgba(255,255,255,.06); }
 .targetConfirmDialog > span { color: #68f5ca; font: 800 8px var(--font-mono); letter-spacing: .14em; text-transform: uppercase; }
 .targetConfirmDialog h3 { margin: 8px 0 0; color: #f0fcf8; font-size: 20px; letter-spacing: -.035em; }
 .targetConfirmDialog > p { margin: 8px 0 0; color: #8ca19b; font-size: 11px; line-height: 1.55; }
-.targetConfirmAthlete { display: grid; grid-template-columns: 30px minmax(0,1fr); align-items: center; gap: 12px; margin-top: 17px; border: 1px solid rgba(255,255,255,.1); border-radius: 15px; background: rgba(255,255,255,.045); padding: 13px; }
+.targetConfirmAthlete { display: grid; grid-template-columns: 30px minmax(0,1fr) 20px; align-items: center; gap: 12px; margin-top: 17px; border: 1px solid rgba(104,245,202,.16); border-radius: 16px; background: linear-gradient(135deg,rgba(104,245,202,.075),rgba(255,255,255,.025)); padding: 14px; }
 .targetConfirmAthlete .shirtSwatch { width: 24px; height: 24px; }
 .targetConfirmAthlete > div { display: flex; min-width: 0; flex-direction: column; }
 .targetConfirmAthlete strong { color: #edfaf6; font-size: 13px; }
 .targetConfirmAthlete small { margin-top: 4px; color: #8da29c; font-size: 9px; }
+.targetConfirmAthlete > svg { width: 19px; color: #68f5ca; filter: drop-shadow(0 0 9px rgba(104,245,202,.3)); }
+.targetConfidence { margin-top: 14px; border-radius: 14px; background: rgba(0,0,0,.16); padding: 12px; }
+.targetConfidence > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.targetConfidence > div span { color: #9bb0aa; font-size: 9px; font-weight: 750; }
+.targetConfidence > div strong { color: #dffbf2; font: 800 11px var(--font-mono); }
+.targetConfidence > span { display: block; height: 5px; margin-top: 9px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.08); }
+.targetConfidence > span i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg,#f3ca69 0%,#68f5ca 72%); box-shadow: 0 0 14px rgba(104,245,202,.4); transition: width .18s ease; }
+.targetConfidence > small { display: block; margin-top: 7px; color: #79daba; font: 750 8px var(--font-mono); }
+.targetLockDetails { display: grid; gap: 7px; margin-top: 13px; }
+.targetLockDetails span { display: flex; align-items: center; gap: 8px; color: #8fa39d; font-size: 9px; line-height: 1.4; }
+.targetLockDetails svg { width: 14px; min-width: 14px; color: #62e7bd; }
 .targetConfirmActions { display: grid; grid-template-columns: .8fr 1.2fr; gap: 8px; margin-top: 17px; }
 .targetConfirmActions button { display: inline-flex; min-height: 45px; align-items: center; justify-content: center; gap: 7px; border: 1px solid rgba(255,255,255,.12); border-radius: 13px; background: rgba(255,255,255,.045); color: #aebfba; padding: 0 13px; font-size: 10px; font-weight: 800; cursor: pointer; }
 .targetConfirmActions button:last-child { border-color: #68f5ca; background: #68f5ca; color: #03110d; box-shadow: 0 10px 28px rgba(89,243,197,.16); }
+.targetConfirmActions button:disabled { border-color: rgba(255,255,255,.1); background: rgba(255,255,255,.055); color: #6f807b; box-shadow: none; cursor: not-allowed; }
 .targetConfirmActions svg { width: 15px; }
 .cameraEmpty { position: absolute; z-index: 5; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: radial-gradient(circle at 50% 43%, rgba(79,242,193,.09), transparent 27%), linear-gradient(145deg,#071416,#030a0b); padding: 38px; text-align: center; }
 .cameraEmpty > span { display: grid; width: 74px; height: 74px; place-items: center; border: 1px solid rgba(102,245,202,.25); border-radius: 24px; background: rgba(91,242,197,.07); color: #61f3c7; box-shadow: 0 0 50px rgba(66,225,180,.1); }

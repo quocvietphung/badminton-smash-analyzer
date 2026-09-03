@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  advanceLockedPoseReacquisition,
+  createLockReacquisitionState,
   createMultiPoseTrackerState,
+  findLockedPoseReacquisition,
   hitTestTrackedPose,
+  isTrackedPoseLockReady,
   updateMultiPoseTracker,
 } from "../src/lib/multi-pose-tracker.ts";
 import type { PoseAppearance, ShirtColor } from "../src/lib/pose-appearance.ts";
@@ -131,4 +135,121 @@ test("hit testing chooses the visible athlete under the pointer", () => {
   const result = updateMultiPoseTracker(createMultiPoseTrackerState(), [pose(0.25), pose(0.75)], 0);
   const selected = hitTestTrackedPose(result.poses, 0.77, 0.56);
   assert.equal(selected?.trackId, result.poses.find((entry) => entry.bounds.centerX > 0.5)?.trackId);
+});
+
+test("requires a stable multi-frame observation before an athlete can be locked", () => {
+  const red = appearance(0, "red");
+  let result = updateMultiPoseTracker(createMultiPoseTrackerState(), [pose(0.5, 0.54, 1, red)], 0);
+  assert.equal(isTrackedPoseLockReady(result.poses[0]), false);
+
+  for (let frame = 1; frame < 5; frame += 1) {
+    result = updateMultiPoseTracker(result.state, [pose(0.5 + frame * 0.002, 0.54, 1, red)], frame * 40);
+  }
+
+  assert.equal(result.poses[0].stableFrames, 5);
+  assert.equal(isTrackedPoseLockReady(result.poses[0]), true);
+  assert.ok(result.poses[0].lockConfidence >= 0.72);
+});
+
+test("resets lock readiness after a missed observation", () => {
+  let result = updateMultiPoseTracker(createMultiPoseTrackerState(), [pose(0.5)], 0);
+  for (let frame = 1; frame < 5; frame += 1) {
+    result = updateMultiPoseTracker(result.state, [pose(0.5)], frame * 40);
+  }
+  assert.equal(isTrackedPoseLockReady(result.poses[0]), true);
+
+  result = updateMultiPoseTracker(result.state, [], 220);
+  result = updateMultiPoseTracker(result.state, [pose(0.5)], 260);
+  assert.equal(result.poses[0].stableFrames, 1);
+  assert.equal(isTrackedPoseLockReady(result.poses[0]), false);
+});
+
+test("reacquires a uniquely matching locked athlete after the tracker ID expires", () => {
+  const red = appearance(0, "red");
+  let result = updateMultiPoseTracker(createMultiPoseTrackerState(), [pose(0.38, 0.54, 1, red)], 0);
+  const original = result.poses[0];
+  result = updateMultiPoseTracker(result.state, [], 1_250);
+  result = updateMultiPoseTracker(result.state, [pose(0.46, 0.54, 1, red)], 1_300);
+
+  const recovered = findLockedPoseReacquisition(result.poses, {
+    appearance: original.appearance!,
+    bounds: original.bounds,
+    lastSeenAt: 0,
+  }, 1_300);
+
+  assert.notEqual(result.poses[0].trackId, original.trackId);
+  assert.equal(recovered?.trackId, result.poses[0].trackId);
+});
+
+test("does not guess when two athletes are equally plausible lock matches", () => {
+  const red = appearance(0, "red");
+  const initial = updateMultiPoseTracker(createMultiPoseTrackerState(), [pose(0.5, 0.54, 1, red)], 0).poses[0];
+  const candidates = updateMultiPoseTracker(
+    createMultiPoseTrackerState(),
+    [pose(0.4, 0.54, 1, red), pose(0.6, 0.54, 1, red)],
+    1_300,
+  ).poses;
+
+  assert.equal(findLockedPoseReacquisition(candidates, {
+    appearance: initial.appearance!,
+    bounds: initial.bounds,
+    lastSeenAt: 0,
+  }, 1_300), null);
+});
+
+test("does not reacquire a different shirt or an expired lock", () => {
+  const red = appearance(0, "red");
+  const blue = appearance(11, "blue");
+  const initial = updateMultiPoseTracker(createMultiPoseTrackerState(), [pose(0.42, 0.54, 1, red)], 0).poses[0];
+  const blueCandidate = updateMultiPoseTracker(createMultiPoseTrackerState(), [pose(0.44, 0.54, 1, blue)], 1_300).poses;
+  const redCandidate = updateMultiPoseTracker(createMultiPoseTrackerState(), [pose(0.44, 0.54, 1, red)], 4_000).poses;
+  const memory = { appearance: initial.appearance!, bounds: initial.bounds, lastSeenAt: 0 };
+
+  assert.equal(findLockedPoseReacquisition(blueCandidate, memory, 1_300), null);
+  assert.equal(findLockedPoseReacquisition(redCandidate, memory, 4_000), null);
+});
+
+test("reacquires a lost athlete only after the same candidate is verified across frames", () => {
+  const red = appearance(0, "red");
+  const original = updateMultiPoseTracker(
+    createMultiPoseTrackerState(),
+    [pose(0.4, 0.54, 1, red)],
+    0,
+  ).poses[0];
+  const memory = { appearance: original.appearance!, bounds: original.bounds, lastSeenAt: 0 };
+  let tracker = createMultiPoseTrackerState();
+  let recovery = createLockReacquisitionState();
+
+  for (let frame = 0; frame < 3; frame += 1) {
+    const timestamp = 1_300 + frame * 40;
+    const result = updateMultiPoseTracker(tracker, [pose(0.45, 0.54, 1, red)], timestamp);
+    tracker = result.state;
+    const verification = advanceLockedPoseReacquisition(result.poses, memory, timestamp, recovery);
+    recovery = verification.state;
+    assert.equal(Boolean(verification.pose), frame === 2);
+  }
+});
+
+test("restarts lost-athlete verification when the candidate identity changes", () => {
+  const red = appearance(0, "red");
+  const original = updateMultiPoseTracker(createMultiPoseTrackerState(), [pose(0.5, 0.54, 1, red)], 0).poses[0];
+  const candidate = updateMultiPoseTracker(createMultiPoseTrackerState(), [pose(0.52, 0.54, 1, red)], 1_300).poses[0];
+  const memory = { appearance: original.appearance!, bounds: original.bounds, lastSeenAt: 0 };
+
+  const first = advanceLockedPoseReacquisition(
+    [candidate],
+    memory,
+    1_300,
+    createLockReacquisitionState(),
+  );
+  const switched = advanceLockedPoseReacquisition(
+    [{ ...candidate, trackId: candidate.trackId + 1 }],
+    memory,
+    1_340,
+    first.state,
+  );
+
+  assert.equal(switched.state.consecutiveFrames, 1);
+  assert.equal(switched.pose, null);
+  assert.equal(switched.progress, 1 / 3);
 });

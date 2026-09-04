@@ -97,6 +97,8 @@ import { publishAnalysisSnapshot } from "@/lib/analysis-session-store";
 import {
   clampReplayWindow,
   createReplayWindow,
+  isPlayableReplayWindow,
+  normalizeSessionReplayWindows,
 } from "@/lib/session-replay";
 import { resolveTargetConfirmation } from "@/lib/athlete-target-selection";
 import type {
@@ -1221,7 +1223,10 @@ function SessionReplay({
   const copy = UI[language];
   const replayCopy = REPLAY_COPY[language];
   const videoRef = useRef<HTMLVideoElement>(null);
-  const clips = useMemo(() => movements.filter((movement) => movement.replay), [movements]);
+  const clips = useMemo(
+    () => movements.filter((movement) => isPlayableReplayWindow(movement.replay)),
+    [movements],
+  );
   const [activeIndex, setActiveIndex] = useState(clips[0]?.index ?? 0);
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -1241,7 +1246,7 @@ function SessionReplay({
     seekToClipStart();
   }, [activeIndex, seekToClipStart]);
 
-  const togglePlayback = useCallback(() => {
+  const togglePlayback = useCallback(async () => {
     const video = videoRef.current;
     const replay = activeMovement?.replay;
     if (!video || !replay) return;
@@ -1250,9 +1255,36 @@ function SessionReplay({
       setPlaying(false);
       return;
     }
-    const currentMs = video.currentTime * 1_000;
-    if (currentMs < replay.startMs || currentMs >= replay.endMs - 40) seekToClipStart(activeMovement);
-    void video.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+    try {
+      if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
+        await new Promise<void>((resolve, reject) => {
+          let timeout = 0;
+          const cleanup = () => {
+            window.clearTimeout(timeout);
+            video.removeEventListener("loadedmetadata", handleLoaded);
+            video.removeEventListener("error", handleError);
+          };
+          const handleLoaded = () => {
+            cleanup();
+            resolve();
+          };
+          const handleError = () => {
+            cleanup();
+            reject(video.error ?? new Error("Replay metadata unavailable"));
+          };
+          video.addEventListener("loadedmetadata", handleLoaded, { once: true });
+          video.addEventListener("error", handleError, { once: true });
+          timeout = window.setTimeout(handleError, 5_000);
+          video.load();
+        });
+      }
+      const currentMs = video.currentTime * 1_000;
+      if (currentMs < replay.startMs || currentMs >= replay.endMs - 40) seekToClipStart(activeMovement);
+      await video.play();
+      setPlaying(true);
+    } catch {
+      setPlaying(false);
+    }
   }, [activeMovement, seekToClipStart]);
 
   const selectClip = useCallback((movement: AnalysisMovement) => {
@@ -1313,7 +1345,7 @@ function SessionReplay({
             src={videoUrl}
             playsInline
             muted
-            preload="metadata"
+            preload="auto"
             onLoadedMetadata={() => seekToClipStart()}
             onTimeUpdate={handleTimeUpdate}
             onPause={() => setPlaying(false)}
@@ -1331,7 +1363,7 @@ function SessionReplay({
           <div className={styles.replayAngleStrip}>
             {telemetry.slice(0, 5).map((metric) => <span key={metric.label}><small>{metric.label}</small><strong>{metric.value}</strong></span>)}
           </div>
-          <button type="button" className={styles.replayPlayButton} onClick={togglePlayback} aria-label={playing ? replayCopy.pause : replayCopy.play}>
+          <button type="button" className={styles.replayPlayButton} onClick={() => void togglePlayback()} aria-label={playing ? replayCopy.pause : replayCopy.play}>
             {playing ? <Pause /> : <Play />}
           </button>
         </div>
@@ -2112,7 +2144,8 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
       const video = videoRef.current;
       if (!runningRef.current || !video) return;
       if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.currentTime !== lastVideoTimeRef.current) {
-        const now = video.currentTime > 0 ? video.currentTime * 1_000 : performance.now();
+        // Replay offsets and recorder start time must share the same monotonic clock.
+        const now = performance.now();
         if (workerRef.current && workerInitializedRef.current && !workerFrameBusyRef.current) {
           lastVideoTimeRef.current = video.currentTime;
           workerFrameBusyRef.current = true;
@@ -2289,18 +2322,22 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
 
   const saveCurrentSession = useCallback((sessionSummary: AnalysisSummary, video: SessionVideo | null) => {
     if (!movementsRef.current.length) return;
-    const sessionMovements = movementsRef.current.map((movement) => {
+    const createdAt = new Date().toISOString();
+    const clampedMovements = movementsRef.current.map((movement) => {
       if (!movement.replay || !video) return movement;
       return {
         ...movement,
         replay: clampReplayWindow(movement.replay, video.durationMs),
       };
     });
+    const sessionMovements = video
+      ? normalizeSessionReplayWindows(clampedMovements, video.durationMs, createdAt)
+      : clampedMovements;
     movementsRef.current = sessionMovements;
     setMovements(sessionMovements);
     const session: MotionSession = {
       id: crypto.randomUUID(),
-      createdAt: new Date().toISOString(),
+      createdAt,
       trainingModule: trainingModuleRef.current,
       drillMode: trainingModuleRef.current === "stroke" ? modeRef.current : footworkModeRef.current,
       preferredHand: preferredHandRef.current,
@@ -2366,7 +2403,10 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   }, [footworkMode, language, mode, onNavigate, replaceReplayVideo, trainingModule]);
 
   const loadHistory = useCallback((session: MotionSession) => {
-    const localized = session.movements.map((movement) => localizeAnalysisMovement(movement, language));
+    const replayReadyMovements = isSessionVideo(session.video)
+      ? normalizeSessionReplayWindows(session.movements, session.video.durationMs, session.createdAt)
+      : session.movements;
+    const localized = replayReadyMovements.map((movement) => localizeAnalysisMovement(movement, language));
     movementsRef.current = localized;
     nextIndexRef.current = localized.length + 1;
     setMovements(localized);

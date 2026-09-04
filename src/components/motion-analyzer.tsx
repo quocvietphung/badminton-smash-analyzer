@@ -2389,29 +2389,20 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     const localized = session.movements.map((movement) => localizeAnalysisMovement(movement, language));
     return { ...session, movements: localized, summary: createSummary(localized, language) };
   }), [history, language]);
+  const selectedTrainingLabel = trainingModule === "stroke"
+    ? `${copy.strokeModule} · ${techniqueLabel(mode, language)}`
+    : `${copy.footworkModule} · ${catalogLabel(footworkMode, language)}`;
+  const selectedTrainingShort = trainingModule === "stroke"
+    ? TECHNIQUES.find((item) => item.value === mode)?.short
+    : FOOTWORK_CATALOG.find((item) => item.value === footworkMode)?.short;
+  const selectedSideLabel = preferredHand === "left"
+    ? copy.left
+    : preferredHand === "right"
+      ? copy.right
+      : copy.autoHand;
 
   return (
     <section id="live-studio" className={styles.module} aria-label={copy.title}>
-      <section className={styles.sessionSetupLauncher} hidden={view !== "live" || status === "live"}>
-        <button
-          type="button"
-          onClick={() => setSessionSetupOpen(true)}
-          aria-haspopup="dialog"
-          aria-expanded={sessionSetupOpen}
-        >
-          <span className={styles.sessionSetupIcon}><SlidersHorizontal /></span>
-          <span className={styles.sessionSetupSummary}>
-            <small>{copy.sessionSetup}</small>
-            <strong>{trainingModule === "stroke"
-              ? `${copy.strokeModule} · ${techniqueLabel(mode, language)}`
-              : `${copy.footworkModule} · ${catalogLabel(footworkMode, language)}`}</strong>
-            <em>{copy.sessionSummary}</em>
-          </span>
-          <span className={styles.sessionSetupPrivacy}><ShieldCheck />{copy.privacy}</span>
-          <ChevronRight aria-hidden="true" />
-        </button>
-      </section>
-
       {view === "live" && sessionSetupOpen ? createPortal(<div
         className={styles.sessionSetupBackdrop}
         onPointerDown={(event) => {
@@ -2499,16 +2490,34 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
           ><i /></span> : null}
           <div className={styles.cameraBadges}>
             <span className={recording ? styles.recordingBadge : status === "live" ? styles.liveBadge : ""}><i />{recording ? copy.recording : status === "live" ? systemCopy.live : systemCopy.off}</span>
-            <span>{trainingModule === "stroke" ? TECHNIQUES.find((item) => item.value === mode)?.short : FOOTWORK_CATALOG.find((item) => item.value === footworkMode)?.short}</span>
-            <span>{preferredHand === "left" ? copy.left.toUpperCase() : preferredHand === "right" ? copy.right.toUpperCase() : systemCopy.autoHandShort}</span>
-            {status === "live" ? <button
+            {status !== "live" ? <button
               type="button"
-              className={`${styles.cameraOptionsButton} ${cameraSettingsOpen ? styles.cameraBadgeActive : ""}`}
-              disabled={recording}
-              onClick={() => setCameraSettingsOpen((current) => !current)}
-              aria-label={copy.cameraSettings}
-              aria-expanded={cameraSettingsOpen}
-            ><SlidersHorizontal /><span>{copy.options}</span></button> : null}
+              className={styles.cameraSetupButton}
+              disabled={status === "loading"}
+              onClick={() => setSessionSetupOpen(true)}
+              aria-haspopup="dialog"
+              aria-expanded={sessionSetupOpen}
+              aria-label={`${copy.sessionSetup}: ${selectedTrainingLabel}, ${selectedSideLabel}`}
+            >
+              <SlidersHorizontal aria-hidden="true" />
+              <span>
+                <small>{copy.sessionSetup}</small>
+                <strong>{selectedTrainingLabel}</strong>
+                <em>{selectedSideLabel} · {copy.sessionSummary}</em>
+              </span>
+              <ChevronRight aria-hidden="true" />
+            </button> : <>
+              <span>{selectedTrainingShort}</span>
+              <span>{preferredHand === "left" ? copy.left.toUpperCase() : preferredHand === "right" ? copy.right.toUpperCase() : systemCopy.autoHandShort}</span>
+              <button
+                type="button"
+                className={`${styles.cameraOptionsButton} ${cameraSettingsOpen ? styles.cameraBadgeActive : ""}`}
+                disabled={recording}
+                onClick={() => setCameraSettingsOpen((current) => !current)}
+                aria-label={copy.cameraSettings}
+                aria-expanded={cameraSettingsOpen}
+              ><SlidersHorizontal /><span>{copy.options}</span></button>
+            </>}
             <button type="button" onClick={() => setFocusMode((current) => !current)} aria-label={focusMode ? copy.exitFocus : copy.focus}>{focusMode ? <Minimize2 /> : <Maximize2 />}</button>
           </div>
           {status === "live" && cameraSettingsOpen ? <div className={styles.cameraQuickSettings}>

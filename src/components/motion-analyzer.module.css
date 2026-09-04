@@ -277,8 +277,8 @@
 .focusReticle::after { width: 2px; height: 12px; }
 .focusReticle i { position: absolute; inset: 6px; border: 1px solid rgba(246,211,101,.35); border-radius: 7px; }
 @keyframes focus-lock { from { opacity: .2; transform: translate(-50%,-50%) scale(1.45); } 60% { opacity: 1; transform: translate(-50%,-50%) scale(.92); } to { transform: translate(-50%,-50%) scale(1); } }
-.targetConfirmBackdrop { position: absolute; z-index: 14; inset: 0; display: grid; place-items: center; background: rgba(0,8,8,.58); padding: 20px; backdrop-filter: blur(5px); }
-.targetConfirmDialog { width: min(100%,450px); border: 1px solid rgba(112,247,206,.3); border-radius: 24px; background: radial-gradient(circle at 90% 5%,rgba(104,245,202,.11),transparent 32%),linear-gradient(155deg,rgba(8,28,29,.985),rgba(3,14,16,.985)); padding: 24px; box-shadow: 0 32px 90px rgba(0,0,0,.54),inset 0 1px 0 rgba(255,255,255,.06); }
+.targetConfirmBackdrop { position: fixed; z-index: 240; inset: 0; display: grid; overflow-y: auto; place-items: center; overscroll-behavior: contain; background: rgba(0,8,8,.72); padding: 20px; backdrop-filter: blur(7px); }
+.targetConfirmDialog { width: min(100%,450px); max-height: calc(100dvh - 40px); overflow-y: auto; border: 1px solid rgba(112,247,206,.3); border-radius: 24px; background: radial-gradient(circle at 90% 5%,rgba(104,245,202,.11),transparent 32%),linear-gradient(155deg,rgba(8,28,29,.995),rgba(3,14,16,.995)); padding: 24px; box-shadow: 0 32px 90px rgba(0,0,0,.54),inset 0 1px 0 rgba(255,255,255,.06); }
 .targetConfirmDialog > span { color: #68f5ca; font: 800 8px var(--font-mono); letter-spacing: .14em; text-transform: uppercase; }
 .targetConfirmDialog h3 { margin: 8px 0 0; color: #f0fcf8; font-size: 20px; letter-spacing: -.035em; }
 .targetConfirmDialog > p { margin: 8px 0 0; color: #8ca19b; font-size: 11px; line-height: 1.55; }
@@ -586,9 +586,9 @@
   .cameraStage { min-height: 63vh; }
   .targetButtons { grid-template-columns: 1fr; }
   .targetPicker { max-height: 42vh; overflow-y: auto; }
-  .targetConfirmBackdrop { padding: 14px; }
-  .targetConfirmDialog { border-radius: 19px; padding: 18px; }
-  .targetConfirmActions { grid-template-columns: 1fr; }
+  .targetConfirmBackdrop { align-items: end; padding: 12px 0 0; }
+  .targetConfirmDialog { width: 100%; max-height: calc(100dvh - 12px); border-right: 0; border-bottom: 0; border-left: 0; border-radius: 24px 24px 0 0; padding: 18px 18px calc(18px + env(safe-area-inset-bottom)); }
+  .targetConfirmActions { position: sticky; z-index: 2; bottom: calc(-18px - env(safe-area-inset-bottom)); grid-template-columns: 1fr; margin-right: -18px; margin-bottom: calc(-18px - env(safe-area-inset-bottom)); margin-left: -18px; background: linear-gradient(180deg,rgba(3,14,16,0),rgba(3,14,16,.99) 18%); padding: 18px 18px calc(18px + env(safe-area-inset-bottom)); }
   .cameraEmpty { justify-content: flex-start; padding: 70px 18px 24px; }
   .cameraEmpty > span { width: 56px; height: 56px; border-radius: 18px; }
   .cameraEmpty > span svg { width: 24px; }

@@ -98,6 +98,7 @@ import {
   clampReplayWindow,
   createReplayWindow,
 } from "@/lib/session-replay";
+import { resolveTargetConfirmation } from "@/lib/athlete-target-selection";
 import type {
   AnalysisMovement,
   AnalysisReplayWindow,
@@ -224,6 +225,7 @@ const UI = {
     targetLabel: "Mục tiêu phân tích",
     targetSelect: "Bạn muốn khóa VĐV nào?",
     targetGuide: "Chạm trực tiếp vào người như lấy nét camera, hoặc chọn theo màu áo và vị trí.",
+    openTargetPicker: "Chọn VĐV",
     changeTarget: "Đổi người",
     collapseTarget: "Thu gọn",
     confirmTargetTitle: "Xác nhận VĐV cần phân tích",
@@ -334,6 +336,7 @@ const UI = {
     targetLabel: "Analysis target",
     targetSelect: "Which athlete do you want to lock?",
     targetGuide: "Tap an athlete like camera focus, or choose by shirt color and position.",
+    openTargetPicker: "Choose athlete",
     changeTarget: "Change athlete",
     collapseTarget: "Collapse",
     confirmTargetTitle: "Confirm analysis target",
@@ -444,6 +447,7 @@ const UI = {
     targetLabel: "Analyseziel",
     targetSelect: "Welchen Athleten möchtest du fixieren?",
     targetGuide: "Tippe wie beim Kamerafokus auf eine Person oder wähle nach Trikotfarbe und Position.",
+    openTargetPicker: "Athlet wählen",
     changeTarget: "Person wechseln",
     collapseTarget: "Einklappen",
     confirmTargetTitle: "Analyseziel bestätigen",
@@ -1378,7 +1382,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   const [selectedTrackId, setSelectedTrackId] = useState<number | null>(null);
   const [targetStatus, setTargetStatus] = useState<TargetStatus>("waiting");
   const [targetRecoveryProgress, setTargetRecoveryProgress] = useState(0);
-  const [targetPickerExpanded, setTargetPickerExpanded] = useState(true);
+  const [targetPickerExpanded, setTargetPickerExpanded] = useState(false);
   const [pendingTarget, setPendingTarget] = useState<AthleteOption | null>(null);
   const [focusReticle, setFocusReticle] = useState<FocusReticle | null>(null);
   const [workerStatus, setWorkerStatus] = useState<WorkerStatus>("checking");
@@ -1449,9 +1453,10 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
 
   const latest = movements.at(-1) ?? null;
   const selectedAthleteOption = visibleAthletes.find((athlete) => athlete.trackId === selectedTrackId) ?? null;
-  const pendingTargetDisplay = pendingTarget;
-  const pendingTargetVisible = pendingTarget !== null;
-  const pendingTargetReady = pendingTarget?.lockReady ?? false;
+  const pendingTargetState = resolveTargetConfirmation(pendingTarget, visibleAthletes);
+  const pendingTargetDisplay = pendingTargetState.display;
+  const pendingTargetVisible = pendingTargetState.visible;
+  const pendingTargetReady = pendingTargetState.ready;
   const activeSummary = useMemo(
     () => summary ?? (movements.length ? createSummary(movements, language) : null),
     [language, movements, summary],
@@ -1750,10 +1755,6 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
       setCurrentMessage(copy.targetUnavailable);
       return;
     }
-    if (!isTrackedPoseLockReady(pose)) {
-      setCurrentMessage(copy.targetVerifying);
-      return;
-    }
     const option = visibleAthletes.find((athlete) => athlete.trackId === trackId) ?? {
       trackId,
       shirtColor: pose.appearance?.shirtColor ?? "unknown",
@@ -1765,9 +1766,9 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     setPendingTarget({
       ...option,
       lockConfidence: Math.round(pose.lockConfidence * 100),
-      lockReady: true,
+      lockReady: isTrackedPoseLockReady(pose),
     });
-  }, [copy.targetUnavailable, copy.targetVerifying, visibleAthletes]);
+  }, [copy.targetUnavailable, visibleAthletes]);
 
   const cancelAthleteSelection = useCallback(() => {
     pendingTrackIdRef.current = null;
@@ -1812,6 +1813,8 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   useEffect(() => {
     if (!pendingTarget) return;
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     const focusTimer = window.setTimeout(() => {
       const buttons = targetConfirmDialogRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)");
       buttons?.[buttons.length - 1]?.focus({ preventScroll: true });
@@ -1845,6 +1848,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     return () => {
       window.clearTimeout(focusTimer);
       window.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousOverflow;
       previousFocus?.focus({ preventScroll: true });
     };
   }, [cancelAthleteSelection, pendingTarget]);
@@ -1956,7 +1960,6 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
       if (targetStatusRef.current !== nextStatus) {
         targetStatusRef.current = nextStatus;
         setTargetStatus(nextStatus);
-        if (nextStatus === "selecting") setTargetPickerExpanded(true);
       }
       setAthleteDetected(false);
       resetTargetMotion();
@@ -2173,7 +2176,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     setVisibleAthletes([]);
     setSelectedTrackId(null);
     setTargetStatus("waiting");
-    setTargetPickerExpanded(true);
+    setTargetPickerExpanded(false);
     setAthleteDetected(false);
     resetLockRecovery();
     resetTargetMotion();
@@ -2252,7 +2255,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     setVisibleAthletes([]);
     setSelectedTrackId(null);
     setTargetStatus("waiting");
-    setTargetPickerExpanded(true);
+    setTargetPickerExpanded(false);
     setAthleteDetected(false);
     setStatus("idle");
     resetLockRecovery();
@@ -2552,12 +2555,18 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
                 className={styles.targetChange}
                 onClick={beginTargetChange}
               >{copy.changeTarget}</button> : null}
+              {selectedTrackId === null ? <button
+                type="button"
+                className={styles.targetChange}
+                onClick={() => setTargetPickerExpanded((current) => !current)}
+                aria-expanded={targetPickerExpanded}
+              >{targetPickerExpanded ? copy.collapseTarget : copy.openTargetPicker}</button> : null}
             </div>
             {selectedTrackId === null && targetPickerExpanded && visibleAthletes.length ? <div className={styles.targetButtons} aria-label={copy.targetLabel}>
               {visibleAthletes.map((athlete) => <button
                 type="button"
                 key={athlete.trackId}
-                disabled={recording || !athlete.lockReady}
+                disabled={recording}
                 onClick={() => requestAthleteSelection(athlete.trackId)}
                 aria-label={`${language === "vi" ? "Khóa VĐV" : language === "de" ? "Athleten fixieren" : "Lock athlete"} ${athlete.trackId}, ${shirtColorLabel(athlete.shirtColor, language)}, ${positionLabel(athlete.position, language)}`}
               >
@@ -2576,7 +2585,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
               </button>)}
             </div> : null}
           </div> : null}
-          {pendingTarget ? <div
+          {pendingTarget ? createPortal(<div
             className={styles.targetConfirmBackdrop}
             onPointerDown={(event) => {
               if (event.target === event.currentTarget) cancelAthleteSelection();
@@ -2619,7 +2628,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
                 <button type="button" disabled={!pendingTargetVisible || !pendingTargetReady} onClick={confirmAthleteSelection}><UserRoundCheck />{copy.confirmTarget}</button>
               </div>
             </div>
-          </div> : null}
+          </div>, document.body) : null}
           {status !== "live" ? <div className={styles.cameraEmpty}>
             <span>{trainingModule === "footwork" ? <Footprints /> : <Activity />}</span>
             <h3>{copy.cameraTitle}</h3>

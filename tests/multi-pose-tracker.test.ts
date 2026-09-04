@@ -207,7 +207,7 @@ test("requires a stable multi-frame observation before an athlete can be locked"
   assert.ok(result.poses[0].lockConfidence >= 0.72);
 });
 
-test("resets lock readiness after a missed observation", () => {
+test("keeps verification progress through one dropped camera frame", () => {
   let result = updateMultiPoseTracker(createMultiPoseTrackerState(), [pose(0.5)], 0);
   for (let frame = 1; frame < 5; frame += 1) {
     result = updateMultiPoseTracker(result.state, [pose(0.5)], frame * 40);
@@ -216,8 +216,26 @@ test("resets lock readiness after a missed observation", () => {
 
   result = updateMultiPoseTracker(result.state, [], 220);
   result = updateMultiPoseTracker(result.state, [pose(0.5)], 260);
-  assert.equal(result.poses[0].stableFrames, 1);
-  assert.equal(isTrackedPoseLockReady(result.poses[0]), false);
+  assert.equal(result.poses[0].stableFrames, 5);
+  assert.equal(isTrackedPoseLockReady(result.poses[0]), true);
+});
+
+test("allows a moderate-confidence athlete to become lockable without shirt color", () => {
+  let result = updateMultiPoseTracker(
+    createMultiPoseTrackerState(),
+    [pose(0.5, 0.54, 1, undefined, 0.58)],
+    0,
+  );
+  for (let frame = 1; frame < 8; frame += 1) {
+    result = updateMultiPoseTracker(
+      result.state,
+      [pose(0.5 + frame * 0.001, 0.54, 1, undefined, 0.58)],
+      frame * 40,
+    );
+  }
+
+  assert.equal(isTrackedPoseLockReady(result.poses[0]), true);
+  assert.ok(result.poses[0].lockConfidence >= 0.72);
 });
 
 test("reacquires a uniquely matching locked athlete after the tracker ID expires", () => {

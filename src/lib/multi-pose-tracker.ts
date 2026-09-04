@@ -311,11 +311,11 @@ function calculateLockConfidence(track: TrackMemory) {
   const landmarkConfidence = clamp01((track.confidence - 0.35) / 0.55);
   const appearanceConfidence = track.appearance
     ? clamp01((track.appearance.confidence - 0.2) / 0.65)
-    : 0.35;
+    : 0.55;
   return clamp01(
-    temporalConfidence * 0.5
-    + landmarkConfidence * 0.32
-    + appearanceConfidence * 0.18,
+    temporalConfidence * 0.52
+    + landmarkConfidence * 0.35
+    + appearanceConfidence * 0.13,
   );
 }
 
@@ -504,7 +504,11 @@ export function updateMultiPoseTracker(
   let nextId = state.nextId;
   const nextTracks = activeTracks.map((track, trackIndex) => {
     const assignment = assignments.find((entry) => entry.trackIndex === trackIndex);
-    if (!assignment) return { ...track, stableFrames: 0, missedFrames: track.missedFrames + 1 };
+    if (!assignment) return {
+      ...track,
+      stableFrames: Math.max(0, track.stableFrames - 1),
+      missedFrames: track.missedFrames + 1,
+    };
     const detection = detections[assignment.detectionIndex];
     const motion = observationCentricMotionUpdate(track, detection, timestamp);
     const appearanceGallery = extendAppearanceGallery(track.appearanceGallery, detection.appearance);
@@ -529,7 +533,7 @@ export function updateMultiPoseTracker(
       bodyScale: track.bodyScale * 0.55 + detection.bodyScale * 0.45,
       bounds: blendBounds(track.bounds, detection.bounds, track.missedFrames > 0 ? 0.68 : 0.38),
       confidence: detection.confidence,
-      stableFrames: track.missedFrames === 0 && timestamp - track.lastSeenAt <= 450
+      stableFrames: track.missedFrames <= 1 && timestamp - track.lastSeenAt <= 220
         ? Math.min(30, track.stableFrames + 1)
         : 1,
       appearance: appearanceAccepted

@@ -11,7 +11,7 @@
     "test:motion": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test tests/motion-technique.test.ts",
     "test:footwork": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test tests/footwork-analysis.test.ts",
     "test:tracker": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test tests/multi-pose-tracker.test.ts",
-    "test:vision": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test tests/pose-lite-classifier.test.ts tests/pose-metrics.test.ts tests/motion-technique.test.ts tests/footwork-analysis.test.ts tests/multi-pose-tracker.test.ts tests/pose-appearance.test.ts tests/session-replay.test.ts",
+    "test:vision": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test tests/pose-lite-classifier.test.ts tests/pose-metrics.test.ts tests/motion-technique.test.ts tests/footwork-analysis.test.ts tests/multi-pose-tracker.test.ts tests/pose-appearance.test.ts tests/session-replay.test.ts tests/athlete-target-selection.test.ts",
     "test:rag": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test tests/rag-retrieval.test.ts"
   },
   "dependencies": {

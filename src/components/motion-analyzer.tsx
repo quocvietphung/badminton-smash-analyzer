@@ -1419,6 +1419,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   const targetRecoveryProgressRef = useRef(0);
   const lockReacquisitionRef = useRef(createLockReacquisitionState());
   const visibleAthletesSignatureRef = useRef("");
+  const lastAthleteUiUpdateRef = useRef(0);
   const appearanceCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const selectedAppearanceRef = useRef<PoseAppearance | undefined>(undefined);
   const lockedTargetMemoryRef = useRef<LockedTargetMemory | null>(null);
@@ -1445,12 +1446,9 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
 
   const latest = movements.at(-1) ?? null;
   const selectedAthleteOption = visibleAthletes.find((athlete) => athlete.trackId === selectedTrackId) ?? null;
-  const pendingTargetLive = pendingTarget === null
-    ? null
-    : visibleAthletes.find((athlete) => athlete.trackId === pendingTarget.trackId) ?? null;
-  const pendingTargetDisplay = pendingTargetLive ?? pendingTarget;
-  const pendingTargetVisible = pendingTargetLive !== null;
-  const pendingTargetReady = pendingTargetLive?.lockReady ?? false;
+  const pendingTargetDisplay = pendingTarget;
+  const pendingTargetVisible = pendingTarget !== null;
+  const pendingTargetReady = pendingTarget?.lockReady ?? false;
   const activeSummary = useMemo(
     () => summary ?? (movements.length ? createSummary(movements, language) : null),
     [language, movements, summary],
@@ -1743,10 +1741,14 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
   }, [copy.notRecording, copy.targetUnavailable, copy.targetVerifying, resetLockRecovery, resetTargetMotion]);
 
   const requestAthleteSelection = useCallback((trackId: number) => {
-    if (recordingRef.current || selectedTrackIdRef.current !== null) return;
+    if (recordingRef.current || selectedTrackIdRef.current !== null || pendingTrackIdRef.current !== null) return;
     const pose = trackedPosesRef.current.find((entry) => entry.trackId === trackId);
     if (!pose) {
       setCurrentMessage(copy.targetUnavailable);
+      return;
+    }
+    if (!isTrackedPoseLockReady(pose)) {
+      setCurrentMessage(copy.targetVerifying);
       return;
     }
     const option = visibleAthletes.find((athlete) => athlete.trackId === trackId) ?? {
@@ -1757,8 +1759,12 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
       lockReady: isTrackedPoseLockReady(pose),
     };
     pendingTrackIdRef.current = trackId;
-    setPendingTarget(option);
-  }, [copy.targetUnavailable, visibleAthletes]);
+    setPendingTarget({
+      ...option,
+      lockConfidence: Math.round(pose.lockConfidence * 100),
+      lockReady: true,
+    });
+  }, [copy.targetUnavailable, copy.targetVerifying, visibleAthletes]);
 
   const cancelAthleteSelection = useCallback(() => {
     pendingTrackIdRef.current = null;
@@ -1874,15 +1880,17 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
         trackId: pose.trackId,
         shirtColor: stableShirtColor(athleteColorsRef.current, pose.trackId, detectedColor),
         position,
-        lockConfidence: Math.round(pose.lockConfidence * 100),
+        lockConfidence: Math.round(pose.lockConfidence * 20) * 5,
         lockReady: isTrackedPoseLockReady(pose),
       };
-    });
+    }).sort((left, right) => left.trackId - right.trackId);
     const signature = athleteOptions
       .map((option) => `${option.trackId}:${option.shirtColor}:${option.position}:${option.lockConfidence}:${option.lockReady}`)
       .join(",");
-    if (signature !== visibleAthletesSignatureRef.current) {
+    if (signature !== visibleAthletesSignatureRef.current
+      && (visibleAthletesSignatureRef.current === "" || now - lastAthleteUiUpdateRef.current >= 160)) {
       visibleAthletesSignatureRef.current = signature;
+      lastAthleteUiUpdateRef.current = now;
       setVisibleAthletes(athleteOptions);
     }
 
@@ -2070,6 +2078,8 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
 
   const selectAthleteFromCamera = useCallback((event: ReactPointerEvent<HTMLCanvasElement>) => {
     if (status !== "live" || recordingRef.current || selectedTrackIdRef.current !== null) return;
+    event.preventDefault();
+    event.stopPropagation();
     const canvas = canvasRef.current;
     if (!canvas || canvas.width <= 0 || canvas.height <= 0) return;
     const rect = canvas.getBoundingClientRect();
@@ -2499,7 +2509,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
             aria-hidden="true"
           ><i /></span> : null}
           <div className={styles.cameraBadges}>
-            <span className={status === "live" ? styles.liveBadge : ""}><i />{status === "live" ? systemCopy.live : systemCopy.off}</span>
+            <span className={recording ? styles.recordingBadge : status === "live" ? styles.liveBadge : ""}><i />{recording ? copy.recording : status === "live" ? systemCopy.live : systemCopy.off}</span>
             <span>{trainingModule === "stroke" ? TECHNIQUES.find((item) => item.value === mode)?.short : FOOTWORK_CATALOG.find((item) => item.value === footworkMode)?.short}</span>
             <span>{preferredHand === "left" ? copy.left.toUpperCase() : preferredHand === "right" ? copy.right.toUpperCase() : systemCopy.autoHandShort}</span>
             {status === "live" ? <button
@@ -2526,7 +2536,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
             </label>
             <label><span>{trainingModule === "footwork" ? copy.dominantSide : copy.hand}</span><select value={preferredHand} onChange={(event) => setPreferredHand(event.target.value as PreferredHand)}><option value="auto">{copy.autoHand}</option><option value="right">{copy.right}</option><option value="left">{copy.left}</option></select></label>
           </div> : null}
-          {status === "live" ? <div className={`${styles.targetPicker} ${!targetPickerExpanded ? styles.targetPickerCompact : ""}`} aria-live="polite">
+          {status === "live" && !pendingTarget ? <div className={`${styles.targetPicker} ${!targetPickerExpanded ? styles.targetPickerCompact : ""}`} aria-live="polite">
             <div className={styles.targetSummary}>
               <span>{copy.targetLabel}</span>
               <strong>{targetStatus === "locked" && selectedTrackId !== null
@@ -2549,11 +2559,9 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
               {visibleAthletes.map((athlete) => <button
                 type="button"
                 key={athlete.trackId}
-                className={pendingTarget?.trackId === athlete.trackId ? styles.targetActive : ""}
-                disabled={recording}
+                disabled={recording || !athlete.lockReady}
                 onClick={() => requestAthleteSelection(athlete.trackId)}
                 aria-label={`${language === "vi" ? "Khóa VĐV" : language === "de" ? "Athleten fixieren" : "Lock athlete"} ${athlete.trackId}, ${shirtColorLabel(athlete.shirtColor, language)}, ${positionLabel(athlete.position, language)}`}
-                aria-pressed={pendingTarget?.trackId === athlete.trackId}
               >
                 <i
                   className={styles.shirtSwatch}
@@ -2567,7 +2575,6 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
                     {athlete.lockReady ? copy.targetReady : `${copy.targetVerifying} · ${athlete.lockConfidence}%`}
                   </em>
                 </span>
-                {pendingTarget?.trackId === athlete.trackId ? <Check aria-hidden="true" /> : null}
               </button>)}
             </div> : null}
           </div> : null}
@@ -2639,12 +2646,11 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
               <small>{copy.stopCamera}</small>
             </div>
           </div> : null}
-          <div className={styles.liveEvent}><span>{recording ? copy.recording : finalizing ? copy.stopSet : copy.phase}</span><strong>{recording || finalizing ? currentMessage : status === "live" ? trainingModule === "footwork" ? liveFootworkPhaseLabel(metrics, language) : livePhaseLabel(metrics.phase, language) : trainingModule === "footwork" ? copy.footworkWaiting : copy.liveWaiting}</strong></div>
           {recording ? <div className={styles.recordingPulse} aria-hidden="true" /> : null}
         </div>
 
         <aside className={styles.livePanel}>
-          <div className={styles.panelHeading}><div><span>{copy.liveMetrics}</span><strong>{trainingModule === "footwork" ? liveFootworkPhaseLabel(metrics, language) : livePhaseLabel(metrics.phase, language)}</strong></div>{trainingModule === "footwork" ? <Footprints /> : <Activity />}</div>
+          <div className={styles.panelHeading}><div><span>{copy.liveMetrics}</span><strong>{trainingModule === "footwork" ? liveFootworkPhaseLabel(metrics, language) : livePhaseLabel(metrics.phase, language)}</strong>{recording || finalizing ? <small className={styles.liveStatus}>{currentMessage}</small> : null}</div>{trainingModule === "footwork" ? <Footprints /> : <Activity />}</div>
           <div className={styles.metricGrid}>
             {trainingModule === "footwork" ? <>
               <article><span>{copy.footSpeed}</span><strong>{metrics.footSpeed.toFixed(2)}<small>rel/s</small></strong><i style={{ "--metric": `${Math.min(100, metrics.footSpeed * 28)}%` } as CSSProperties} /></article>

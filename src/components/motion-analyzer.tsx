@@ -38,7 +38,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type PointerEvent as ReactPointerEvent,
+  type MouseEvent as ReactMouseEvent,
 } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -1811,7 +1811,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const focusTimer = window.setTimeout(() => {
       const buttons = targetConfirmDialogRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)");
-      buttons?.[buttons.length - 1]?.focus();
+      buttons?.[buttons.length - 1]?.focus({ preventScroll: true });
     }, 0);
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -1827,22 +1827,22 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
       const last = focusable.at(-1);
       if (!focusable.includes(document.activeElement as HTMLElement)) {
         event.preventDefault();
-        first.focus();
+        first.focus({ preventScroll: true });
         return;
       }
       if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();
-        last?.focus();
+        last?.focus({ preventScroll: true });
       } else if (!event.shiftKey && document.activeElement === last) {
         event.preventDefault();
-        first.focus();
+        first.focus({ preventScroll: true });
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.clearTimeout(focusTimer);
       window.removeEventListener("keydown", handleKeyDown);
-      previousFocus?.focus();
+      previousFocus?.focus({ preventScroll: true });
     };
   }, [cancelAthleteSelection, pendingTarget]);
 
@@ -2076,7 +2076,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
 
   useEffect(() => { processFrameRef.current = processPoses; }, [processPoses]);
 
-  const selectAthleteFromCamera = useCallback((event: ReactPointerEvent<HTMLCanvasElement>) => {
+  const selectAthleteFromCamera = useCallback((event: ReactMouseEvent<HTMLCanvasElement>) => {
     if (status !== "live" || recordingRef.current || selectedTrackIdRef.current !== null) return;
     event.preventDefault();
     event.stopPropagation();
@@ -2500,7 +2500,7 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
           <canvas
             ref={canvasRef}
             className={selectedTrackId === null ? styles.targetSelectionCanvas : styles.targetLockedCanvas}
-            onPointerDown={selectAthleteFromCamera}
+            onClick={selectAthleteFromCamera}
           />
           {focusReticle && pendingTarget ? <span
             key={focusReticle.token}

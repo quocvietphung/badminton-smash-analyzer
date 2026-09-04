@@ -260,6 +260,7 @@ const UI = {
     right: "Tay phải",
     left: "Tay trái",
     openCamera: "Mở camera",
+    startSession: "Bắt đầu phiên Live",
     opening: "Đang khởi động…",
     stopCamera: "Tắt camera",
     cameraSettings: "Thiết lập trong camera",
@@ -369,6 +370,7 @@ const UI = {
     right: "Right hand",
     left: "Left hand",
     openCamera: "Open camera",
+    startSession: "Start live session",
     opening: "Starting…",
     stopCamera: "Stop camera",
     cameraSettings: "In-camera setup",
@@ -478,6 +480,7 @@ const UI = {
     right: "Rechte Hand",
     left: "Linke Hand",
     openCamera: "Kamera öffnen",
+    startSession: "Live-Training starten",
     opening: "Wird gestartet…",
     stopCamera: "Kamera ausschalten",
     cameraSettings: "Kamera-Einstellungen",
@@ -2359,12 +2362,6 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
     onNavigate("sessions");
   }, [footworkMode, language, mode, onNavigate, replaceReplayVideo, trainingModule]);
 
-  useEffect(() => {
-    const handleDemo = () => loadDemo();
-    window.addEventListener("smashlab:demo", handleDemo);
-    return () => window.removeEventListener("smashlab:demo", handleDemo);
-  }, [loadDemo]);
-
   const loadHistory = useCallback((session: MotionSession) => {
     const localized = session.movements.map((movement) => localizeAnalysisMovement(movement, language));
     movementsRef.current = localized;
@@ -2395,14 +2392,6 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
 
   return (
     <section id="live-studio" className={styles.module} aria-label={copy.title}>
-      <header className={styles.moduleHeader} hidden={view !== "live"}>
-        <div>
-          <span>{copy.module}</span>
-          <h2>{trainingModule === "footwork" ? copy.footworkTitle : copy.title}</h2>
-          <p>{trainingModule === "footwork" ? copy.footworkDescription : copy.description}</p>
-        </div>
-      </header>
-
       <section className={styles.sessionSetupLauncher} hidden={view !== "live" || status === "live"}>
         <button
           type="button"
@@ -2622,7 +2611,19 @@ export default function MotionAnalyzer({ view, language, onNavigate, onAskCoach 
               </div>
             </div>
           </div> : null}
-          {status !== "live" ? <div className={styles.cameraEmpty}><span>{trainingModule === "footwork" ? <Footprints /> : <Activity />}</span><h3>{copy.cameraTitle}</h3><p>{trainingModule === "footwork" ? copy.footworkCameraCopy : copy.cameraCopy}</p><button type="button" onClick={() => void startCamera()} disabled={status === "loading"}><Camera />{status === "loading" ? copy.opening : copy.openCamera}</button></div> : null}
+          {status !== "live" ? <div className={styles.cameraEmpty}>
+            <span>{trainingModule === "footwork" ? <Footprints /> : <Activity />}</span>
+            <h3>{copy.cameraTitle}</h3>
+            <p>{trainingModule === "footwork" ? copy.footworkCameraCopy : copy.cameraCopy}</p>
+            <div className={styles.cameraEmptyActions}>
+              <button type="button" className={styles.cameraStartButton} onClick={() => void startCamera()} disabled={status === "loading"}>
+                <Camera />{status === "loading" ? copy.opening : copy.startSession}
+              </button>
+              <button type="button" className={styles.cameraDemoButton} onClick={loadDemo}>
+                <Sparkles />{copy.demo}
+              </button>
+            </div>
+          </div> : null}
           {status === "live" ? <div className={styles.cameraControls}>
             <div className={styles.cameraControlGroup}>
               <button

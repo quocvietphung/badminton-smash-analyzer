@@ -8,11 +8,9 @@ import {
   Languages,
   MessageCircleMore,
   Moon,
-  Play,
   ScanLine,
   Settings2,
   ShieldCheck,
-  Sparkles,
   Sun,
   X,
 } from "lucide-react";
@@ -39,8 +37,6 @@ const COPY = {
     title: "Hiểu từng chuyển động.",
     titleAccent: "Hoàn thiện từng kỹ thuật.",
     intro: "Mở camera, chọn kỹ thuật vợt hoặc bộ pháp và nhận phản hồi theo chuỗi chuyển động. Không tải video hoặc khung hình lên máy chủ.",
-    heroPrimary: "Bắt đầu phiên Live",
-    heroSecondary: "Xem dữ liệu mẫu",
     sessionsEyebrow: "Performance studio",
     sessionsTitle: "Báo cáo phiên tập",
     sessionsCopy: "Xem lại kỹ thuật vợt, chu kỳ bộ pháp, góc khớp, nhịp chuyển động và ưu tiên cần sửa của từng lần lặp.",
@@ -77,8 +73,6 @@ const COPY = {
     title: "Understand every movement.",
     titleAccent: "Refine every technique.",
     intro: "Open the camera, choose racket technique or footwork and receive motion-sequence feedback. Video frames never leave your device.",
-    heroPrimary: "Start live session",
-    heroSecondary: "View sample data",
     sessionsEyebrow: "Performance studio",
     sessionsTitle: "Session reports",
     sessionsCopy: "Review racket technique, footwork cycles, joint angles, motion rhythm and priorities for every repetition.",
@@ -115,8 +109,6 @@ const COPY = {
     title: "Verstehe jede Bewegung.",
     titleAccent: "Verfeinere jede Technik.",
     intro: "Öffne die Kamera, wähle Schlagtechnik oder Beinarbeit und erhalte Feedback zum Bewegungsablauf. Videobilder verlassen dein Gerät nicht.",
-    heroPrimary: "Live-Training starten",
-    heroSecondary: "Beispieldaten ansehen",
     sessionsEyebrow: "Performance Studio",
     sessionsTitle: "Trainingsberichte",
     sessionsCopy: "Prüfe Schlagtechnik, Beinarbeitszyklen, Gelenkwinkel, Bewegungsrhythmus und Verbesserungsprioritäten jeder Wiederholung.",
@@ -301,14 +293,6 @@ export default function StudioShell() {
             </div>
             <div className={styles.heroAside}>
               <p>{copy.intro}</p>
-              <div>
-                <button type="button" className={styles.heroPrimary} onClick={() => document.getElementById("live-studio")?.scrollIntoView({ behavior: "smooth" })}>
-                  <Play />{copy.heroPrimary}
-                </button>
-                <button type="button" className={styles.heroSecondary} onClick={() => window.dispatchEvent(new Event("smashlab:demo"))}>
-                  <Sparkles />{copy.heroSecondary}
-                </button>
-              </div>
             </div>
           </section>
         ) : (

@@ -162,16 +162,16 @@
 }
 .iconButton svg { width: 18px; }
 
-.main { position: relative; z-index: 1; width: min(1480px, 100%); margin: 0 auto; padding: 44px 30px 32px; }
+.main { position: relative; z-index: 1; width: min(1480px, 100%); margin: 0 auto; padding: 34px 30px 32px; }
 
 .hero {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(330px, .65fr);
-  align-items: end;
+  align-items: center;
   gap: 64px;
-  min-height: 280px;
-  margin-bottom: 28px;
-  padding: 16px 4px 14px;
+  min-height: 220px;
+  margin-bottom: 14px;
+  padding: 8px 4px 12px;
 }
 
 .eyebrow {
@@ -185,15 +185,10 @@
   text-transform: uppercase;
 }
 .eyebrow span { width: 32px; height: 1px; background: currentColor; box-shadow: 0 0 8px currentColor; }
-.hero h1 { max-width: 880px; margin: 0; color: var(--sl-text); font-size: clamp(45px, 5.6vw, 82px); font-weight: 690; line-height: .94; letter-spacing: -.065em; }
+.hero h1 { max-width: 880px; margin: 0; color: var(--sl-text); font-size: clamp(43px, 5vw, 72px); font-weight: 690; line-height: .94; letter-spacing: -.065em; }
 .hero h1 em { color: var(--sl-accent); font-style: normal; text-shadow: 0 0 44px color-mix(in srgb, var(--sl-accent) 18%, transparent); }
 .heroAside { border-left: 1px solid var(--sl-border-strong); padding-left: 24px; }
-.heroAside p { margin: 0 0 20px; color: var(--sl-muted); font-size: 14px; line-height: 1.75; }
-.heroAside > div { display: flex; flex-wrap: wrap; gap: 9px; }
-.heroAside button { display: inline-flex; min-height: 48px; align-items: center; gap: 8px; border-radius: 13px; padding: 0 16px; font-size: 12px; font-weight: 820; cursor: pointer; }
-.heroAside button svg { width: 16px; }
-.heroPrimary { border: 0; background: linear-gradient(135deg, #83ffde, #46e2b4); color: #04110d; box-shadow: 0 12px 30px rgba(51, 225, 174, .18); }
-.heroSecondary { border: 1px solid var(--sl-border); background: var(--sl-surface-soft); color: var(--sl-text-soft); }
+.heroAside p { margin: 0; color: var(--sl-muted); font-size: 13px; line-height: 1.75; }
 
 .viewHeader { max-width: 780px; margin: 14px 0 34px; }
 .viewHeader > p { margin: 0 0 11px; color: var(--sl-accent); font: 800 11px var(--font-mono); letter-spacing: .14em; text-transform: uppercase; }
@@ -281,7 +276,7 @@
 @media (max-width: 1050px) {
   .header { grid-template-columns: 1fr auto; }
   .desktopNav { display: none; }
-  .hero { grid-template-columns: 1fr; gap: 30px; }
+  .hero { grid-template-columns: 1fr; gap: 18px; }
   .heroAside { max-width: 680px; }
   .preferenceGrid { grid-template-columns: 1fr 1fr; }
   .preferenceCard:last-child { grid-column: 1 / -1; }
@@ -294,14 +289,12 @@
   .brandText strong { font-size: 15px; }
   .brandText span { font-size: 8px; }
   .privacy { display: none; }
-  .main { padding: 26px 14px 18px; }
-  .hero { min-height: 0; margin-bottom: 20px; padding: 7px 1px 4px; }
-  .eyebrow { margin-bottom: 14px; font-size: 10px; letter-spacing: .12em; }
-  .hero h1 { font-size: clamp(42px, 12.5vw, 58px); line-height: .95; }
+  .main { padding: 18px 14px; }
+  .hero { min-height: 0; gap: 14px; margin-bottom: 10px; padding: 4px 1px 8px; }
+  .eyebrow { margin-bottom: 10px; font-size: 9px; letter-spacing: .11em; }
+  .hero h1 { font-size: clamp(36px, 10.5vw, 46px); line-height: .95; }
   .heroAside { border-left: 0; padding-left: 0; }
-  .heroAside p { font-size: 14px; }
-  .heroAside > div { display: grid; grid-template-columns: 1fr 1fr; }
-  .heroAside button { min-height: 50px; justify-content: center; padding: 0 10px; }
+  .heroAside p { font-size: 12px; line-height: 1.6; }
   .viewHeader { margin: 9px 0 25px; }
   .viewHeader h1 { font-size: 43px; }
   .viewHeader > span { font-size: 13px; }

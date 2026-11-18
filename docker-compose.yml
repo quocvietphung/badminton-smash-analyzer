@@ -1,0 +1,79 @@
+# SmashLab local AI stack (Compose project: smashlab-ai). Local only: no cloud services.
+# Start:  docker compose up -d --build
+# The studio server reads SMASHLAB_API_URL (default http://localhost:8000) and SMASHLAB_API_TOKEN.
+# The browser never receives either value. Leave SMASHLAB_API_TOKEN empty for the local-only setup.
+name: smashlab-ai
+
+services:
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        UID: ${SMASHLAB_UID:-501}
+        GID: ${SMASHLAB_GID:-20}
+    image: smashlab-ai-backend:local
+    container_name: smashlab-ai-api
+    restart: unless-stopped
+    ports:
+      - "${SMASHLAB_API_PORT:-8000}:8000"
+    environment:
+      SMASHLAB_CORS_ORIGINS: ${SMASHLAB_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://localhost:3002,http://127.0.0.1:3002}
+      SMASHLAB_API_TOKEN: ${SMASHLAB_API_TOKEN:-}
+      SMASHLAB_JOB_TIMEOUT_S: ${SMASHLAB_JOB_TIMEOUT_S:-1200}
+      SMASHLAB_MAX_UPLOAD_MB: ${SMASHLAB_MAX_UPLOAD_MB:-200}
+      SMASHLAB_MAX_DURATION_S: ${SMASHLAB_MAX_DURATION_S:-120}
+      SMASHLAB_ONNX_THREADS: ${SMASHLAB_ONNX_THREADS:-4}
+    volumes:
+      - ./data:/data/input:ro
+      - ./models:/models:ro
+      - ./outputs:/data/outputs
+      - smashlab-ai-db:/data/db
+    networks:
+      - smashlab-ai-net
+    cpus: ${SMASHLAB_CPUS:-4}
+    mem_limit: ${SMASHLAB_MEM_LIMIT:-3g}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4).status == 200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 40s
+
+  # The studio (Next.js) in a container. Open http://localhost:3002. The dev server on port 3000 still works.
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    image: smashlab-ai-web:local
+    container_name: smashlab-ai-web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${SMASHLAB_WEB_PORT:-3002}:3000"
+    environment:
+      SMASHLAB_API_URL: http://api:8000
+      SMASHLAB_API_TOKEN: ${SMASHLAB_API_TOKEN:-}
+      SMASHLAB_SITE_PASSWORD: ${SMASHLAB_SITE_PASSWORD:-}
+      AI_ASSISTANT_ENABLED: "true"
+    # AI Coach (Azure OpenAI). Names come from .env.azure.local; the short-lived token comes from the host helper
+    # scripts/azure-token.mjs through a read-only file mount. No API key is used.
+    env_file:
+      - path: .env.azure.local
+        required: false
+    volumes:
+      - ./.local/azure-auth:/run/azure-auth:ro
+    networks:
+      - smashlab-ai-net
+    cpus: ${SMASHLAB_WEB_CPUS:-2}
+    mem_limit: ${SMASHLAB_WEB_MEM_LIMIT:-1g}
+
+volumes:
+  smashlab-ai-db:
+    name: smashlab-ai-db
+
+networks:
+  smashlab-ai-net:
+    name: smashlab-ai-net

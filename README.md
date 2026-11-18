@@ -1,153 +1,205 @@
-# SmashLab Motion Science Studio
+# SmashLab
 
-SmashLab is a browser-first badminton training studio that turns a phone camera into a practical motion-analysis tool. It helps players review racket technique and footwork through on-device pose tracking, repeatable session scores, and an AI coach grounded in the session's motion metrics.
+SmashLab is an offline badminton video analysis studio. You analyse a match or training clip on your own computer. A local Docker backend tracks the shuttle and the players, writes an annotated video and structured data, and the studio shows the results with timestamps and frame numbers. An AI Coach answers questions from that data only.
 
-Built with **Next.js 16**, **React 19**, **TypeScript**, **MediaPipe Tasks Vision**, and **Azure OpenAI**, then deployed as a lightweight **PWA on Vercel**.
+![SmashLab demo](docs/media/smashlab-demo.gif)
 
-> The interesting constraint: video frames stay on the athlete's device. The optional AI Coach receives reduced motion metrics, never raw video or camera frames.
+| Video analysis and timeline | Trajectory estimate drawer |
+|---|---|
+| ![Overview](docs/media/smashlab-overview.png) | ![Drawer](docs/media/smashlab-trajectory-drawer.png) |
 
-## Product tour
+> **Status: research prototype.** Every shot label is a rule-based **trajectory estimate · unverified**. Nothing in SmashLab is validated against ground truth yet. Coverage and detection counts are not accuracy scores.
 
-### Live Motion Capture
+## What it does
 
-Frame one athlete, confirm the target, choose a drill, and record a set. SmashLab tracks body landmarks, separates repetitions into motion phases, and surfaces technique signals such as elbow angle, shoulder position, knee bend, trunk rotation, rhythm, balance, and recovery.
+- **Video analysis.** Upload an MP4 or MOV (up to 200 MB and 120 s), or pick one of four test samples. Progress is shown stage by stage.
+- **Tracking.** TrackNetV3 with InpaintNet finds the shuttle. YOLOX-s finds the people. Logical identities P1 to P4 follow court position and motion. Identities are never reassigned silently.
+- **Court.** Automatic court calibration with a manual four-corner fallback. Floor-plane metres are shown only when the calibration is valid.
+- **Shot timeline.** One row per contact candidate with its player, time, a six-class trajectory estimate (smash, clear, drop, drive, net shot, lift), image-space speed in px/s, evidence tier and quality, and a review status.
+- **Evidence and corrections.** The original and the annotated video play in sync. Manual labels and corrections are stored apart from the raw output, and they are never applied automatically.
+- **AI Coach.** Answers questions about the open analysis, grounded in its data and a short reference shelf. It receives derived numbers only, never video.
+- **Sessions and evaluation.** Each sample is one session. Reanalysis creates a new job and never overwrites the old one. The evaluation panel reports measured values only.
+- **Languages.** English, Vietnamese and German for all user-visible text.
 
-![SmashLab Live Studio](public/screenshots/live-studio.png)
+## What it does not do
 
-### Session Reports
+- It does not validate shot types, rallies or speeds. Speeds are image-space pixels per second, never km/h.
+- It does not recognise faces. Identity uses court position, motion continuity and body appearance only.
+- It does not score technique.
 
-Review repetition count, motion score, consistency, capture quality, and the main priorities to work on. Each new camera session can also keep its recording in IndexedDB and replay only the short window around each detected repetition. The replay overlays the matching joint angles, biomechanics score, kinetic-sequence score, contact-height proxy, angular speed, and balance without uploading video to a backend.
+## Architecture
 
-![SmashLab Session Reports](public/screenshots/session-reports.png)
+```mermaid
+flowchart LR
+  B[Browser<br/>Next.js studio] -->|/api/backend proxy<br/>adds API token| S[Studio server<br/>Next.js 16 · Node 22]
+  S -->|HTTP| A[FastAPI backend<br/>Docker · smashlab-ai]
+  A --> Q[(SQLite job store<br/>queue + worker)]
+  A --> P[Pipeline<br/>TrackNetV3 + InpaintNet<br/>YOLOX-s · ByteTrack-style tracker<br/>court calibration]
+  P --> O[(outputs/&lt;job&gt;/<br/>raw/ · results · derived/)]
+  A --> D[Derivation<br/>match analytics · corrections<br/>trajectory rules v1]
+  D --> O
+  S -->|coach-dataset JSON<br/>+ question| C[AI Coach route]
+  C -->|Entra token from az login<br/>token file in Docker| Z[(Azure OpenAI<br/>chat model)]
+```
 
-### AI Coach
+| Layer | Technology |
+|---|---|
+| Studio | Next.js 16, React 19, TypeScript (strict), CSS modules, Vercel AI SDK for the chat stream |
+| Backend | Python 3.12, FastAPI, Uvicorn, SQLite job store, a background worker |
+| Inference | ONNX Runtime (CPU), TrackNetV3 and InpaintNet (MIT), YOLOX-s (Apache-2.0) |
+| Vision | OpenCV, NumPy, MediaPipe Tasks Vision (offline pose modules) |
+| Video output | ffmpeg (bundled through `imageio-ffmpeg`), H.264 MP4 |
+| AI Coach | Azure OpenAI through the `@ai-sdk/azure` provider |
+| Deployment | Docker Compose project `smashlab-ai`, two services: `api` on port 8000, `web` on port 3002 |
 
-Ask questions about the current training data and get practical explanations from a grounded badminton knowledge base. The coach is designed to explain what the motion metrics suggest, not to pretend it can see racket contact or shuttle flight.
+Where things live:
 
-![SmashLab AI Coach](public/screenshots/ai-coach.png)
+- `backend/app/`: pipeline, analytics, API and services. `backend/tests/` holds the Python tests.
+- `src/app/`: Next.js routes, including the server proxy `api/backend` and the chat route `api/ai/chat`.
+- `src/components/`: the studio UI. `match-dashboard.tsx` is the timeline and the drawer. `local-ai-lab.tsx` is the video analysis page.
+- `src/lib/`: client helpers, the match document types, the AI Coach instructions, and the copy for all three languages.
+- `scripts/`: data and model download with checksums, the Azure token helper, and the end-to-end test.
+- `docs/`: the trajectory rule set, the reference review, the local test report and the Azure deployment plan.
 
-## What it can do
+## Run it on your computer
 
-- Track up to four people in frame, verify a stable target across multiple frames, and pause scoring instead of switching athletes after an occlusion.
-- Analyse racket technique drills: Smash, Backhand, Clear, Drop Shot, Drive, or automatic grouping.
-- Analyse footwork cycles such as split step, chassé, lunge, jump and landing, scissor jump, China jump, and recovery to base.
-- Use MediaPipe Pose Landmarker Lite, optional world landmarks, appearance-aware tracking, and a Web Worker when supported.
-- Compare repetitions and highlight technique strengths, consistency, balance, recovery, and capture quality.
-- Record a session once, then jump directly between automatically indexed repetition moments with synchronized technique telemetry over the video.
-- Store up to 12 reports and their supported browser recordings locally on the device with no account or cloud database. Older entries are pruned before a new video is written to reduce storage-quota failures.
-- Offer English, Vietnamese, and German UI copy, plus dark and light training themes.
-- Provide an optional Azure OpenAI Coach route with rate limiting and retrieval-grounded badminton references.
+These steps assume macOS or Linux with Docker Desktop. Expect about 3 GB of free memory for the backend container and a few GB of disk for the models and samples.
 
-## AI and computer vision technology
+### 1. Install the prerequisites
 
-SmashLab combines local computer vision with a focused generative-AI layer. Each part has a different responsibility:
+- **Node.js 22** (20.9 or newer works) and npm.
+- **Docker Desktop** with Compose v2.
+- **Python 3.12**, only if you want to run the backend tests on the host.
+- **Azure CLI** (`az`), only if you want the AI Coach. See the Coach section below.
 
-- **MediaPipe Pose Landmarker Lite** detects full-body landmarks directly in the browser. Optional world landmarks provide a more stable 3D-aware signal when the device supports them.
-- **On-device motion analysis** converts landmark sequences into joint angles, body extension, balance, rhythm, footwork travel, and recovery signals. When MediaPipe world landmarks are available, the stroke pipeline estimates 3D shoulder–hip separation and checks whether lower-body loading, trunk rotation, elbow extension, and wrist acceleration occur in a plausible proximal-to-distal order. These are camera-derived biomechanics proxies rather than laboratory measurements.
-- **Local session replay** uses the browser MediaRecorder and the same monotonic clock as pose analysis. Every accepted repetition receives pre-roll, peak, and post-roll timestamps, so the report can replay only that movement and show the exact assessment attached to it. The original recording and clip indexes remain in IndexedDB on the current device.
-- **Multi-athlete target lock** follows up to four people with a lightweight MOT pipeline inspired by SORT, ByteTrack, and OC-SORT. It combines Kalman motion prediction, observation-direction consistency, two-stage confidence association, body scale, and a bounded torso-appearance gallery. After an occlusion, observation-centric re-updates correct stale velocity before tracking continues. A target must remain stable across multiple frames before it can be locked, and ambiguous recovery pauses scoring rather than silently switching athletes. This is not face recognition.
-- **Rule-based motion classification** groups movement sequences into racket-technique and footwork drills. The classifier is intentionally evidence-aware: it can report insufficient evidence instead of claiming to see shuttle contact, racket-face angle, or flight trajectory.
-- **Web Worker processing** moves pose inference and sequence evaluation off the main UI thread when the browser supports it, keeping the Studio responsive during live capture.
-- **Retrieval-augmented generation (RAG)** selects relevant badminton coaching references before the AI Coach answers. This gives the assistant a constrained knowledge context instead of relying only on a general language model.
-- **Azure OpenAI GPT-4.1 mini** turns reduced session metrics into practical coaching explanations, priorities, and practice suggestions. The model receives structured analysis data and text questions, not video frames.
-
-This hybrid design uses deterministic computer-vision logic for measurable movement signals and generative AI for explanation. It keeps the safety-critical product boundaries visible: the AI Coach explains movement evidence, while it does not invent shuttle speed, contact timing, or trajectory data.
-
-## Target-lock methodology
-
-The browser tracker adapts established multi-object tracking ideas to a small badminton scene without adding a server-side video pipeline or a heavyweight person-identification model:
-
-- **Global association:** detections and active tracks are matched as one assignment problem, using predicted position, body scale, box overlap, appearance, and motion-direction costs.
-- **ByteTrack-inspired confidence stages:** reliable pose detections are associated first; lower-confidence observations may recover an existing track but cannot create an unverified athlete identity.
-- **OC-SORT-inspired motion handling:** recent observations provide a direction-consistency signal, while virtual observations re-update the Kalman state after short occlusions and reduce stale-velocity errors.
-- **Conservative identity recovery:** a small appearance gallery and the last observed trajectory rank candidates after a longer loss. Recovery requires a unique margin and three consecutive confirmations; otherwise scoring remains paused.
-
-These are product-focused adaptations of ideas described in [SORT](https://arxiv.org/abs/1602.00763), [ByteTrack](https://arxiv.org/abs/2110.06864), and [OC-SORT](https://openaccess.thecvf.com/content/CVPR2023/html/Cao_Observation-Centric_SORT_Rethinking_SORT_for_Robust_Multi-Object_Tracking_CVPR_2023_paper.html), not a claim of reproducing their benchmark results. The repository tests identity continuity across reordered detections, same-shirt crossings, confidence drops, occlusion recovery, and ambiguous re-entry.
-
-## Important scope
-
-SmashLab analyses body movement form. It does **not** detect the racket face or shuttle, confirm contact timing, calculate official speed in km/h, reconstruct shuttle trajectory, or replace a qualified coach. Scores are internal training signals, not BWF ratings or scientific accuracy claims. Measurements such as foot speed and centre-of-mass speed are normalised relative values because the camera is not calibrated to a court.
-
-## Run locally
-
-### Requirements
-
-- Node.js 20+
-- A modern browser with camera access
-- npm
-
-### 1. Install dependencies
+### 2. Clone and install
 
 ```bash
+git clone https://github.com/quocvietphung/badminton-smash-analyzer.git
+cd badminton-smash-analyzer
 npm install
 ```
 
-### 2. Configure optional AI Coach access
-
-Copy the example environment file:
+### 3. Download the samples and the models
 
 ```bash
-cp .env.example .env.local
+scripts/download-test-data.sh
 ```
 
-The camera analysis works without Azure credentials. To enable the AI Coach, set these server-only variables in `.env.local`:
+This fetches the four Wikimedia Commons samples, trims them, and downloads the YOLOX-s and TrackNetV3 checkpoints. Every file is checked against its SHA-256. Check what is already present without network access:
 
-```env
-AI_ASSISTANT_ENABLED=true
-AZURE_RESOURCE_NAME=your-resource-name
-AZURE_API_KEY=your-server-side-key
-AZURE_OPENAI_DEPLOYMENT=your-deployment-name
-AZURE_OPENAI_API_VERSION=v1
+```bash
+scripts/download-test-data.sh --verify-only
 ```
 
-Never expose `AZURE_API_KEY` with a `NEXT_PUBLIC_` prefix.
+The TrackNetV3 checkpoints are PyTorch files. The ONNX models used by the backend are exported from them. If the ONNX files are missing after the download, run `scripts/download-test-data.sh --export` with `backend/.venv-dev` set up (see the Verify section).
 
-### 3. Start the development server
+### 4. Start the backend
+
+```bash
+docker compose -p smashlab-ai -f docker-compose.yml up -d --build
+curl http://localhost:8000/health        # {"status":"ok"} when the models are loaded
+```
+
+The first build takes several minutes. The backend listens on `localhost:8000` only and accepts uploads only from the studio origin.
+
+### 5. Start the studio
+
+Development server with hot reload:
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), allow camera access, and follow the setup guide. For reliable tracking, place the phone around hip height, 3–5 metres from the athlete, keep the full body in frame, and avoid backlight. The first visit needs internet access to download the MediaPipe WASM runtime and Pose Landmarker model.
+Open [http://localhost:3000](http://localhost:3000).
 
-## Verify the project
+Or run the studio in Docker, which needs no Node.js on the host:
+
+```bash
+docker compose -p smashlab-ai -f docker-compose.yml up -d --build web
+```
+
+Open [http://localhost:3002](http://localhost:3002). The browser never sees the backend address or the API token. The studio server adds them.
+
+### 6. Run your first analysis
+
+1. Open **Video analysis**.
+2. Choose sample **A · Singles rally** and press **Run AI Analysis**. Or upload your own clip.
+3. When the job reaches **Completed**, scroll through the annotated video, the **Shot timeline** and the **Court map**.
+4. Click a row of the timeline. The drawer shows the mini trajectory, the court position of the player, the scores of the six classes, the evidence tier and quality, and the job and rule version.
+5. Open **Saved sessions** to see every sample with its active analysis. **Ask the coach** opens the Coach for that analysis.
+
+### 7. Stop
+
+```bash
+docker compose -p smashlab-ai -f docker-compose.yml down        # keeps the database and outputs
+```
+
+Do not add `-v` unless you want to delete the job database volume.
+
+## AI Coach (optional, Azure OpenAI)
+
+The Coach uses your Azure OpenAI deployment through your own Azure sign-in. No API key is stored in this repository.
+
+1. Create `.env.azure.local` in the project root (it is git-ignored):
+
+   ```env
+   AI_ASSISTANT_ENABLED=true
+   AZURE_RESOURCE_NAME=your-resource-name
+   AZURE_OPENAI_DEPLOYMENT=your-deployment-name
+   AZURE_OPENAI_MODEL_LABEL=GPT-4.1 mini
+   AZURE_OPENAI_CREDENTIAL=token-file
+   AZURE_OPENAI_TOKEN_FILE=/run/azure-auth/token.json
+   ```
+
+2. Sign in once on your computer: `az login`.
+3. Write the token file and keep it refreshed while you use the Coach:
+
+   ```bash
+   node scripts/azure-token.mjs            # refreshes every 5 minutes; Ctrl+C to stop
+   ```
+
+   The file is written to `.local/azure-auth/` (git-ignored) and mounted read-only into the `web` container. Expired tokens fail closed.
+4. Restart the `web` service if you changed `.env.azure.local`:
+
+   ```bash
+   docker compose -p smashlab-ai -f docker-compose.yml up -d web
+   ```
+
+For the development server on port 3000, set the same variables in `.env.local`. The server then uses your `az` sign-in directly, and the token helper is not needed.
+
+Without this setup the Coach shows "unavailable" and the rest of the studio works normally.
+
+## Verify
 
 ```bash
 npm run lint
 npm run test:vision
 npm run test:rag
+npm run test:local-ai
 npm run build
+
+cd backend
+python3.12 -m venv .venv-dev && .venv-dev/bin/python -m pip install -r requirements-dev.txt
+.venv-dev/bin/python -m pytest
+
+cd ..
+scripts/run-local-test.sh --no-build    # end-to-end test against the running Docker stack
 ```
 
-The test suite covers pose classification, pose metrics, motion phases, footwork analysis, multi-person tracking, appearance matching, and retrieval logic.
+## Branches
 
-## Deploy to Vercel
+- `master`: the stable line. Releases are tagged here.
+- `develop`: integration. Feature work is merged here first, then into `master` when it is ready.
 
-SmashLab is a standard Next.js App Router application and can be deployed directly to Vercel:
+## Documentation
 
-1. Import the repository in the [Vercel dashboard](https://vercel.com/new).
-2. Keep the default build command, or use `npm run build`.
-3. Add the optional Azure variables under **Project Settings → Environment Variables**.
-4. Deploy and open the generated HTTPS URL so browsers can grant camera permission.
+- [docs/SHOT_TRAJECTORY_RULES.md](docs/SHOT_TRAJECTORY_RULES.md): the six-class rule set, its evidence tiers and review status.
+- [docs/REFERENCE_REVIEW.md](docs/REFERENCE_REVIEW.md): the licence and reuse decision for every source that was read.
+- [docs/LOCAL_AI_TEST_REPORT.md](docs/LOCAL_AI_TEST_REPORT.md): measured runtimes, the test log, and the known limitations.
+- [docs/SECURE_REMOTE_ACCESS.md](docs/SECURE_REMOTE_ACCESS.md): remote access and the site password.
+- [docs/AZURE_DEPLOYMENT_PLAN.md](docs/AZURE_DEPLOYMENT_PLAN.md): an Azure deployment plan. It is not deployed.
 
-Video inference, recording, clip indexing, and replay all run in the browser, so Vercel only serves the application and handles the optional AI Coach Route Handler. No Python service, GPU instance, object storage, or cloud video pipeline is required.
+## Licence
 
-The computer-vision and biomechanics calculations do not consume Vercel Functions or GPU time. This architecture remains suitable for a Vercel Hobby deployment because pose inference, target tracking, kinetic-sequence scoring, and local session storage all run on the athlete's device.
-
-## Architecture at a glance
-
-```text
-Camera
-  → MediaPipe Pose Landmarker (browser)
-  → Web Worker + athlete tracking + motion metrics
-  → MediaRecorder + repetition timestamps
-  → Local session/video store (IndexedDB)
-  → Clip replay + session reports / AI Coach
-                         ↘ reduced metrics → Azure OpenAI Route Handler
-```
-
-The main app lives in `src/app`, UI composition is in `src/components`, and the analysis pipeline is kept in focused modules under `src/lib`. The project is intentionally designed to keep raw camera data local while making the analysis logic testable independently of the UI.
-
-## License
-
-This project is licensed under the [MIT License](LICENSE). Copyright (c) 2026 Viet Phung.
+MIT. See [LICENSE](LICENSE). Third-party components, models and sample footage keep their own licences; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

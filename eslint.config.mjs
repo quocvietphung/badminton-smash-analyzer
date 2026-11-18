@@ -13,6 +13,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Local AI backend (Python), datasets, model files and job outputs are not front-end code.
+    "backend/**",
+    "data/**",
+    "models/**",
+    "outputs/**",
   ]),
 ]);
 

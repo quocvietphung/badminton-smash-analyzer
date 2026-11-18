@@ -1,0 +1,19 @@
+# Build context for Dockerfile.web. Keep secrets, data and host-only folders out of the image.
+.env
+.env.*
+.env*.local
+node_modules
+.next
+.git
+.claude
+.venv
+.venv-*
+backend
+data
+models
+outputs
+infra
+docs
+scripts
+tests
+*.log

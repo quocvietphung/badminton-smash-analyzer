@@ -1,0 +1,30 @@
+# Vercel hosts the Next.js studio and its lightweight server-side AI Coach.
+# Video inference remains in the local Docker backend by product design.
+.git
+.next
+.vercel
+.claude
+.idea
+node_modules
+
+# Local-only video pipeline, models, samples, and generated evidence.
+backend
+data
+models
+outputs
+docker-compose.yml
+Dockerfile.web
+
+# Development, research, and deployment drafts are not runtime inputs.
+docs
+infra
+scripts
+tests
+coverage
+*.log
+*.tsbuildinfo
+
+# Secrets and machine-specific configuration.
+.env
+.env.*
+!.env.example

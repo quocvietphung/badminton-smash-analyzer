@@ -48,3 +48,17 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local AI pipeline: datasets, model weights and job outputs stay on this machine
+/data/
+/models/
+/outputs/
+*.onnx
+*.pt
+backend/.venv-dev/
+backend/.pytest_cache/
+backend/.ruff_cache/
+
+# Local secrets and generated tokens (never committed)
+.local/
+.env.azure.local

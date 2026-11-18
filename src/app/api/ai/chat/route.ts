@@ -6,85 +6,21 @@ import {
 import { z } from "zod";
 import {
   AiConfigurationError,
-  getAzureChatModel,
   getChatMaxOutputTokens,
 } from "@/lib/ai/azure-openai";
+import { getChatModel } from "@/lib/ai/chat-model";
 import { buildAnalysisInstructions } from "@/lib/ai/analysis-instructions";
 import {
   buildRetrievalQuery,
   retrieveKnowledge,
 } from "@/lib/ai/retrieval";
 import { checkAiRateLimit, rateLimitHeaders } from "@/lib/ai/rate-limit";
+import { requireSiteSession } from "@/lib/server/site-access";
 import type { StudioLanguage } from "@/lib/studio-types";
+import { videoAnalysisSchema } from "@/lib/video-analysis";
 
 export const maxDuration = 30;
 export const runtime = "nodejs";
-
-const phaseSchema = z.object({
-  phase: z.enum(["ready", "loading", "acceleration", "contact_zone", "follow_through", "start", "approach", "hit_balance", "recovery"]),
-  score: z.number().min(0).max(100),
-  status: z.enum(["good", "review", "missing"]),
-});
-
-const movementSchema = z.object({
-  index: z.number().int().min(1).max(10_000),
-  recordedAt: z.string().max(64),
-  // Keep the API compatible with tabs opened before the footwork deployment.
-  // Those clients did not send `module`, so their movements are stroke data.
-  module: z.enum(["stroke", "footwork"]).default("stroke"),
-  technique: z.enum(["smash", "backhand", "drop_shot", "clear", "drive", "overhead_control", "unknown", "split_step", "running_step", "chasse", "cross_behind", "hop_pivot", "lunge", "jump_landing", "scissor_jump", "china_jump", "forehand_forecourt", "backhand_forecourt", "forehand_rearcourt", "backhand_rearcourt", "recovery_to_base", "six_corner_shadow", "footwork_unknown"]),
-  label: z.string().trim().max(120),
-  evidence: z.number().min(0).max(100),
-  overallScore: z.number().min(0).max(100),
-  postureScore: z.number().min(0).max(100),
-  rhythmScore: z.number().min(0).max(100),
-  recoveryScore: z.number().min(0).max(100),
-  captureQuality: z.number().min(0).max(100),
-  intensity: z.number().min(0).max(100),
-  dominantSide: z.enum(["left", "right"]),
-  durationMs: z.number().min(0).max(5_000),
-  phases: z.array(phaseSchema).max(6),
-  metrics: z.object({
-    elbowAngle: z.number().min(0).max(220),
-    shoulderAngle: z.number().min(0).max(220),
-    kneeFlexion: z.number().min(0).max(180),
-    trunkRotation: z.number().min(0).max(180),
-    contactHeight: z.number().min(0).max(100),
-    bodyExtension: z.number().min(0).max(100),
-    wristSpeed: z.number().min(0).max(10),
-    armAngularSpeed: z.number().min(0).max(3_000),
-    balance: z.number().min(0).max(100),
-    footSpeed: z.number().min(0).max(20).optional(),
-    centerSpeed: z.number().min(0).max(20).optional(),
-    stanceWidth: z.number().min(0).max(4).optional(),
-    landingSymmetry: z.number().min(0).max(100).optional(),
-    travel: z.number().min(0).max(20).optional(),
-    verticalBounce: z.number().min(0).max(20).optional(),
-    alternation: z.number().min(0).max(100).optional(),
-  }),
-  strengths: z.array(z.string().trim().max(240)).max(3),
-  corrections: z.array(z.string().trim().max(280)).max(4),
-  summary: z.string().trim().max(480),
-});
-
-const analysisSchema = z.object({
-  source: z.enum(["none", "demo", "live", "history"]),
-  capturedAt: z.string().max(64),
-  // A Vercel alias can switch to a new deployment while an older client bundle
-  // is still open. Defaulting this field prevents that stale tab from failing.
-  trainingModule: z.enum(["stroke", "footwork"]).default("stroke"),
-  drillMode: z.enum(["open", "smash", "backhand", "clear", "drop_shot", "drive", "footwork_auto", "split_step", "running_step", "chasse", "cross_behind", "hop_pivot", "lunge", "jump_landing", "scissor_jump", "china_jump", "forehand_forecourt", "backhand_forecourt", "forehand_rearcourt", "backhand_rearcourt", "recovery_to_base", "six_corner_shadow"]),
-  preferredHand: z.enum(["auto", "left", "right"]),
-  movements: z.array(movementSchema).max(40),
-  summary: z.object({
-    headline: z.string().trim().max(240),
-    insight: z.string().trim().max(800),
-    averageScore: z.number().min(0).max(100),
-    consistency: z.number().min(0).max(100),
-    strongestPhase: z.string().trim().max(120),
-    priority: z.string().trim().max(360),
-  }).nullable(),
-});
 
 const requestSchema = z.object({
   language: z.enum(["en", "de", "vi"]).default("en"),
@@ -93,7 +29,10 @@ const requestSchema = z.object({
     role: z.enum(["user", "assistant"]),
     parts: z.array(z.unknown()).max(12),
   })).min(1).max(30),
-  analysis: analysisSchema,
+  // Reduced, derived video-analysis results only. The client never sends frames or video.
+  analysis: videoAnalysisSchema,
+  // The coach-dataset/v1 document of this analysis, from the studio server. Bounded; the model never sees video.
+  coachDataset: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 
 const API_COPY: Record<StudioLanguage, {
@@ -183,6 +122,8 @@ function latestUserQuestion(messages: UIMessage[]) {
 }
 
 export async function POST(request: Request) {
+  const signedOut = await requireSiteSession(request);
+  if (signedOut) return signedOut;
   const language = requestLanguage(request);
   const copy = API_COPY[language];
   try {
@@ -211,8 +152,8 @@ export async function POST(request: Request) {
     const knowledge = retrieveKnowledge(retrievalQuery);
 
     const result = streamText({
-      model: getAzureChatModel(),
-      instructions: buildAnalysisInstructions(body.analysis, knowledge, body.language),
+      model: await getChatModel(),
+      instructions: buildAnalysisInstructions(body.analysis, knowledge, body.language, body.coachDataset ?? null),
       messages: await convertToModelMessages(messages),
       maxOutputTokens: getChatMaxOutputTokens(),
     });
@@ -220,7 +161,7 @@ export async function POST(request: Request) {
     return result.toUIMessageStreamResponse({
       headers: { "Cache-Control": "no-store", ...rateLimitHeaders(rateLimit) },
       onError: (error) => {
-        console.error("SmashLab Azure chat failed", error);
+        console.error("SmashLab AI chat failed", error);
         return API_COPY[body.language].aiUnavailable;
       },
     });

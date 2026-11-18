@@ -2,14 +2,15 @@
 
 import { useSyncExternalStore } from "react";
 import {
-  EMPTY_ANALYSIS_SNAPSHOT,
-  type AnalysisSnapshot,
-} from "@/lib/analysis-types";
+  EMPTY_VIDEO_ANALYSIS_SNAPSHOT,
+  type VideoAnalysisSnapshot,
+} from "@/lib/video-analysis";
 
-let currentSnapshot = EMPTY_ANALYSIS_SNAPSHOT;
+// The AI Coach reads the last video analysis that was completed or opened in the studio.
+let currentSnapshot: VideoAnalysisSnapshot = EMPTY_VIDEO_ANALYSIS_SNAPSHOT;
 const listeners = new Set<() => void>();
 
-export function publishAnalysisSnapshot(snapshot: AnalysisSnapshot) {
+export function publishAnalysisSnapshot(snapshot: VideoAnalysisSnapshot) {
   currentSnapshot = snapshot;
   listeners.forEach((listener) => listener());
 }

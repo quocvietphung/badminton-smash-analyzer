@@ -79,9 +79,9 @@ export const BADMINTON_KNOWLEDGE: KnowledgeChunk[] = [
     content:
       "Clear, Drop và Smash có thể dùng phần chuẩn bị trên đầu khá giống nhau. Pose giúp so sánh vùng tiếp xúc, độ duỗi, nhịp tăng tốc và hồi vị, nhưng không thể tách chắc chắn kết quả cú đánh nếu không quan sát vợt và quỹ đạo cầu. Chọn trước bài tập là cách phù hợp để chấm hình thái kỹ thuật.",
     source: {
-      title: "BST: Badminton Stroke-type Transformer",
-      publisher: "CVPR Workshops / arXiv",
-      url: "https://arxiv.org/abs/2502.21085",
+      title: "BWF Coach Education",
+      publisher: "Badminton World Federation",
+      url: "https://bwf.worldacademysport.com/?academy=9",
     },
   },
   {

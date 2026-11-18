@@ -1,0 +1,220 @@
+.library {
+  display: grid;
+  gap: 16px;
+  color: var(--sl-text);
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.toolbar h2 {
+  margin: 0;
+  color: var(--sl-text);
+  font-size: clamp(22px, 2.6vw, 30px);
+  letter-spacing: -.03em;
+}
+
+.list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid var(--sl-border);
+  border-radius: 20px;
+  background: var(--sl-surface);
+  padding: 18px;
+}
+
+.cardTop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.cardTop > svg {
+  width: 18px;
+  height: 18px;
+  color: var(--sl-accent);
+}
+
+.cardTop strong {
+  min-width: 0;
+  color: var(--sl-text);
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.cardTop > .badge {
+  margin-left: auto;
+}
+
+.muted,
+.bad {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.muted {
+  color: var(--sl-muted);
+}
+
+.bad {
+  color: var(--sl-warning);
+}
+
+.muted svg,
+.bad svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px 16px;
+  margin: 0;
+}
+
+.facts div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.facts dt {
+  color: var(--sl-faint);
+  font: 700 10px var(--font-mono);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.facts dd {
+  margin: 0;
+  color: var(--sl-text-soft);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.primaryButton,
+.ghostButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  border-radius: 999px;
+  padding: 0 16px;
+  font: 750 13px var(--font-mono);
+  text-decoration: none;
+  cursor: pointer;
+  transition: opacity .15s ease, transform .15s ease;
+}
+
+.primaryButton svg,
+.ghostButton svg {
+  width: 16px;
+  height: 16px;
+}
+
+.primaryButton {
+  border: 1px solid var(--sl-border-strong);
+  background: var(--sl-accent);
+  color: var(--sl-accent-ink);
+}
+
+.primaryButton:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.ghostButton {
+  border: 1px solid var(--sl-border-strong);
+  background: transparent;
+  color: var(--sl-text-soft);
+}
+
+.primaryButton:focus-visible,
+.ghostButton:focus-visible {
+  outline: 2px solid var(--sl-accent);
+  outline-offset: 2px;
+}
+
+.primaryButton:not(:disabled):hover,
+.ghostButton:hover {
+  transform: translateY(-1px);
+}
+
+.badge {
+  border-radius: 999px;
+  padding: 4px 10px;
+  font: 800 10px var(--font-mono);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.badge_queued {
+  background: var(--sl-surface-soft);
+  color: var(--sl-text-soft);
+}
+
+.badge_running {
+  background: color-mix(in srgb, var(--sl-accent) 14%, transparent);
+  color: var(--sl-accent);
+}
+
+.badge_completed {
+  background: color-mix(in srgb, var(--sl-accent) 22%, transparent);
+  color: var(--sl-accent);
+}
+
+.badge_failed {
+  background: color-mix(in srgb, var(--sl-warning) 18%, transparent);
+  color: var(--sl-warning);
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+
+  .primaryButton,
+  .ghostButton {
+    transition: none;
+  }
+}

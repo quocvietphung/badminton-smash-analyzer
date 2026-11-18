@@ -1,4 +1,4 @@
-import type { AnalysisSnapshot } from "../analysis-types.ts";
+import type { VideoAnalysisSnapshot } from "../video-analysis.ts";
 import {
   BADMINTON_KNOWLEDGE,
   type KnowledgeChunk,
@@ -95,11 +95,11 @@ function scoreChunk(chunk: KnowledgeChunk, queryTokens: string[], normalizedQuer
   return score;
 }
 
-export function buildRetrievalQuery(question: string, snapshot: AnalysisSnapshot) {
-  const strokeContext = snapshot.movements.slice(-12).map((movement) =>
-    `${movement.module} ${movement.label} ${movement.technique} ${movement.summary} ${movement.corrections.join(" ")}`,
-  ).join(" ");
-  return `${question} ${snapshot.trainingModule} ${snapshot.drillMode} ${strokeContext}`.trim();
+export function buildRetrievalQuery(question: string, snapshot: VideoAnalysisSnapshot) {
+  const context = snapshot.source === "none"
+    ? ""
+    : `video analysis shuttle detection player tracking court ${snapshot.court.status} rally ${snapshot.rally.status} shots ${snapshot.shots.status}`;
+  return `${question} ${context}`.trim();
 }
 
 export function retrieveKnowledge(query: string, limit = 4): RetrievedKnowledge[] {

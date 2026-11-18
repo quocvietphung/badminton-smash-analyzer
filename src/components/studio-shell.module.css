@@ -308,7 +308,7 @@
     bottom: calc(9px + env(safe-area-inset-bottom));
     left: 10px;
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     border: 1px solid var(--sl-border-strong);
     border-radius: 20px;
     background: color-mix(in srgb, var(--sl-bg-elevated) 90%, transparent);

@@ -34,10 +34,19 @@ import {
   PromptInputTextarea,
   PromptInputTools,
 } from "@/components/ai-elements/prompt-input";
-import { useAnalysisSnapshot } from "@/lib/analysis-session-store";
-import { apiUrl, LOCAL_AI_PROXY_BASE } from "@/lib/local-ai/client";
+import { publishAnalysisSnapshot, useAnalysisSnapshot } from "@/lib/analysis-session-store";
+import { apiUrl, LOCAL_AI_PROXY_BASE, readStoredJobId } from "@/lib/local-ai/client";
+import { buildVideoAnalysisSnapshot, type VideoAnalysisResults } from "@/lib/video-analysis";
+import type { MatchDocument } from "@/lib/match/types";
 import type { StudioLanguage } from "@/lib/studio-types";
 import styles from "./analysis-chatbot.module.css";
+
+// The parts of a job record the Coach needs to label a stored analysis.
+type StoredJob = {
+  status: string;
+  created_at: number;
+  source: { kind: string; name: string };
+};
 
 const CHAT_COPY = {
   vi: {
@@ -211,6 +220,37 @@ export default function AnalysisChatbot({
   }, [analysisJobId]);
   // Only the dataset of the analysis that is open is ever sent.
   const coachDataset = loadedDataset && loadedDataset.jobId === analysisJobId ? loadedDataset.data : null;
+
+  useEffect(() => {
+    // Opened on its own (for example from Saved sessions), the Coach has no snapshot yet. It then loads the analysis the
+    // studio stored last: the job's results and match document, built the same way as on the analysis page.
+    if (analysis.source !== "none") return;
+    const storedJobId = readStoredJobId(typeof window !== "undefined" ? window.localStorage : null);
+    if (!storedJobId) return;
+    let active = true;
+    const load = async <T,>(path: string): Promise<T | null> => {
+      const response = await fetch(apiUrl(LOCAL_AI_PROXY_BASE, path), { cache: "no-store" });
+      return response.ok ? ((await response.json()) as T) : null;
+    };
+    (async () => {
+      const base = `/api/v1/analyses/${encodeURIComponent(storedJobId)}`;
+      const [job, results, match] = await Promise.all([
+        load<StoredJob>(base),
+        load<VideoAnalysisResults>(`${base}/results`),
+        load<MatchDocument>(`${base}/match`),
+      ]);
+      if (!active || !job || job.status !== "completed" || !results) return;
+      publishAnalysisSnapshot(buildVideoAnalysisSnapshot(results, {
+        jobId: storedJobId,
+        sourceKind: job.source.kind === "upload" ? "upload" : "sample",
+        sourceName: job.source.name,
+        capturedAt: new Date(job.created_at * 1000).toISOString(),
+      }, match));
+    })().catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [analysis.source]);
 
   useEffect(() => {
     // A request that never starts streaming is stopped, so the panel cannot wait forever.

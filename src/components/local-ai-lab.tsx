@@ -474,10 +474,12 @@ export default function LocalAiLab({
   language,
   initialJobId = null,
   onOpenCoach,
+  onOpenSessions,
 }: {
   language: StudioLanguage;
   initialJobId?: string | null;
   onOpenCoach?: () => void;
+  onOpenSessions?: () => void;
 }) {
   const copy: Copy = COPY[language];
   const apiBase = LOCAL_AI_PROXY_BASE;
@@ -817,8 +819,9 @@ export default function LocalAiLab({
             offline={health.state === "offline"}
             onRun={startSampleAnalysis}
             onOpenSaved={(savedJobId) => {
+              // Remember the saved job for the Coach, then show it in the Sessions page with its sample and other runs.
               writeStoredJobId(typeof window !== "undefined" ? window.localStorage : null, savedJobId);
-              setJobId(savedJobId);
+              if (onOpenSessions) onOpenSessions();
             }}
           />
           {formError ? (

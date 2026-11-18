@@ -154,6 +154,7 @@ export default function StudioShell() {
   }, [navigate]);
 
   const openCoach = useCallback(() => navigate("coach"), [navigate]);
+  const openSessions = useCallback(() => navigate("sessions"), [navigate]);
 
   return (
     <SiteGate language={language}>
@@ -229,6 +230,7 @@ export default function StudioShell() {
               language={language}
               initialJobId={selectedJobId}
               onOpenCoach={openCoach}
+              onOpenSessions={openSessions}
             />
           ) : null}
 

@@ -1,0 +1,23 @@
+{
+  "schema": "smashlab.rally-boundary-fixture/v1",
+  "note": "Human rally boundaries for regression tests. Each entry needs a person who watched the video. Null means not annotated yet: the test skips the entry. Do not fill these from the derived candidates.",
+  "videos": [
+    {
+      "sample_id": "sample-a-singles-rally",
+      "annotator": null,
+      "annotated_on": null,
+      "rallies": [
+        {"start_s": null, "end_s": null, "note": "rally 1: fill from the video"},
+        {"start_s": null, "end_s": null, "note": "rally 2: fill from the video"}
+      ]
+    },
+    {
+      "sample_id": "sample-b-fast-shuttle",
+      "annotator": null,
+      "annotated_on": null,
+      "rallies": [
+        {"start_s": null, "end_s": null, "note": "rally 1: fill from the video"}
+      ]
+    }
+  ]
+}

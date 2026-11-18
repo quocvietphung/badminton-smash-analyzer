@@ -1,0 +1,27 @@
+# Runtime dependencies for the SmashLab local AI backend (CPU only, pinned).
+# Resolved from a clean venv on 2026-11-15 for Python 3.12. The Docker image installs only this file.
+annotated-doc==0.0.6
+annotated-types==0.8.0
+anyio==4.16.0
+click==8.5.1
+fastapi==0.163.1
+flatbuffers==25.12.19
+h11==0.16.0
+idna==3.20
+numpy==2.5.4
+scipy==1.16.3
+onnxruntime==1.32.0
+opencv-python-headless==5.0.0.93
+opentelemetry-api==1.45.2
+packaging==26.3
+pillow==13.0.0
+protobuf==7.36.2
+pydantic==2.14.3
+pydantic_core==2.50.4
+python-multipart==0.0.33
+starlette==1.10.0
+typing-inspection==0.4.5
+typing_extensions==4.16.0
+uvicorn==0.54.0
+# Bundled static ffmpeg binary (libx264 encoder) for the annotated MP4 writer; replaces the apt ffmpeg package (~400 MB with LLVM).
+imageio-ffmpeg==0.7.0

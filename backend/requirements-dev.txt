@@ -1,0 +1,4 @@
+# Development and test dependencies (not installed in the Docker image).
+-r requirements.txt
+pytest==9.2.0
+httpx==0.28.1

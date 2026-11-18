@@ -1,0 +1,4 @@
+# Host-only export tools (PyTorch is not in the runtime image; the ONNX files are exported on the host).
+-r requirements-dev.txt
+torch==2.15.0
+onnx==1.23.2

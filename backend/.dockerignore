@@ -1,0 +1,25 @@
+# Keep the build context small: no datasets, outputs, model weights, venvs or host-only tools.
+.venv
+.venv-*
+.pytest_cache
+.ruff_cache
+__pycache__
+*.py[cod]
+*.egg-info
+tests
+tools
+pytest.ini
+requirements-dev.txt
+requirements-export.txt
+Dockerfile
+.dockerignore
+data
+outputs
+models
+*.onnx
+*.pt
+*.pth
+*.mp4
+*.webm
+*.mov
+*.log

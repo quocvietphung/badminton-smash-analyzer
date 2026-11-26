@@ -5,35 +5,50 @@ identities P1 to P4, and floor-plane metres when the court is calibrated), the r
 calibration, the metrics and the manual corrections. No model runs here, and nothing is written back.
 
 Rules that keep the numbers honest:
+- Every shuttle number comes from the shared observed-2d/v1 track (app/analytics/observed2d.py): tracker jumps are
+  removed there with their reasons, TrackNet detections and InpaintNet fills stay apart, and speeds use valid steps only.
 - A contact is a candidate: a sharp turn of the detected shuttle close to a tracked player. A turn alone does not
-  prove racket contact, so a candidate stays unvalidated until a person confirms it.
-- Shot types are either manual labels or the trajectory-rules/v1 estimate (labelled "Trajectory estimate · unverified")
-  from the per-shot dataset of this analysis. A manual label always wins. An estimate is never a validated statistic.
-- Shuttle motion is reported only in image pixels per second. It is not physical shuttle speed. One camera does not
-  observe the shuttle's height, so projecting an airborne shuttle onto the floor plane would misstate km/h.
-- Court positions come from floor-plane metres, which exist only for a calibrated court.
+  prove racket contact, so a candidate stays unconfirmed until a person confirms it.
+- Shot types are either a person's six-class label or the trajectory-rules/v2 estimate (labelled "Trajectory estimate ·
+  unverified") from the per-shot dataset of this analysis. A person's label always wins. A person's note outside the six
+  classes ("unknown" or a legacy label) is kept as a note and never becomes a stroke type.
+- Shuttle motion is reported only as image-space speed in pixels per second. It is not physical shuttle speed. One camera
+  does not observe the shuttle's height, so projecting an airborne shuttle onto the floor plane would misstate km/h.
+- Official speed statistics use confirmed contacts only; automatic candidates are reported apart.
+- Court positions come from floor-plane metres of the players' feet, which exist only for a calibrated court.
+- Three tiers stay apart: Observed 2D (this document), Estimated 3D (monocular, experimental, gated) and Measured 3D
+  (stereo; not run without a synchronised second camera).
 """
 
 from __future__ import annotations
 
 import math
-
-from app.analytics.rallies import derive_rallies, merge_with_human_boundaries, summarise as summarise_rallies
-from app.physics.speed3d import estimate_shot_speed
+from collections import Counter
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
+
+from app.analytics import observed2d as O
+from app.analytics.rallies import derive_rallies, merge_with_human_boundaries, summarise as summarise_rallies
+from app.physics import stereo
+from app.physics.speed3d import estimate_monocular, LABEL as ESTIMATED_3D_LABEL, UNAVAILABLE_LABEL as ESTIMATED_3D_UNAVAILABLE
 
 SCHEMA = "smashlab.match/v1"
 COURT = {"length_m": 13.40, "doubles_width_m": 6.10, "singles_width_m": 5.18}
 SHOT_TYPES = ("smash", "clear", "drop", "drive", "net_shot", "lift", "unknown")
+SIX_CLASSES = SHOT_TYPES[:6]
 # Labels from before the taxonomy was narrowed. They are kept in corrections.json for traceability, but the product
 # shows them as Unknown and never exports them as a stroke type.
 LEGACY_SHOT_TYPES = ("push", "defensive_block", "serve")
 IDENTITIES = {"singles": ("P1", "P2"), "doubles": ("P1", "P2", "P3", "P4")}
 # A foot point that moves faster than this between frames is an identity switch or a calibration error, not movement.
 MAX_PLAYER_SPEED_M_S = 8.0
+# The same rule on the image when the court is not calibrated: the foot point may move at most half a frame diagonal per
+# second (about 1100 px/s at 1080p). Identity switches jump much further within one frame.
+MAX_PLAYER_IMAGE_SPEED_DIAG_S = 0.5
 POSITION_RATE_HZ = 15.0
 SMOOTHING_FRAMES = 7
+DISTANCE_MAX_GAP_FRAMES = 3
+CHART_POINTS = 160
 CONTACT_METHOD = (
     "heuristic: the detected shuttle turns by at least {turn:.0f} degrees within {window} frames on each side, "
     "within {reach:.0%} of a box height of a tracked player; candidates closer than {dedupe:.2f} s are merged"
@@ -53,18 +68,23 @@ def identities_for(mode: str, logical: int) -> tuple:
     return IDENTITIES["doubles"] if mode == "doubles" or logical >= 4 else IDENTITIES["singles"]
 
 
-def _points(shuttle_frames: list) -> dict:
-    """frame -> (x, y, confidence, interpolated) for frames with a shuttle position."""
-    points = {}
-    for item in shuttle_frames:
-        if item.get("visible") and item.get("x") is not None and item.get("y") is not None:
-            points[int(item["frame"])] = (
-                float(item["x"]),
-                float(item["y"]),
-                float(item.get("confidence") or 0.0),
-                bool(item.get("refined")),
-            )
-    return points
+def _points(track: O.ObservedTrack) -> dict:
+    """frame -> (x, y, confidence, interpolated) for the points the sanitizer kept (image positions)."""
+    return {frame: (point.x, point.y, point.confidence, point.interpolated) for frame, point in track.points.items()}
+
+
+def player_foot_at(series: list, frame: int, max_gap: int = 3) -> Optional[tuple[float, float]]:
+    """A player's foot position in floor-plane metres within max_gap frames of a frame; lost or uncertain samples are skipped."""
+    best = None
+    for item in series:
+        pos_frame, x, y = item[0], item[1], item[2]
+        state = item[3] if len(item) > 3 else None
+        if x is None or y is None or state in ("lost", "uncertain"):
+            continue
+        gap = abs(int(pos_frame) - frame)
+        if gap <= max_gap and (best is None or gap < best[0]):
+            best = (gap, float(x), float(y))
+    return None if best is None else (best[1], best[2])
 
 
 def _boxes_by_frame(tracks: list) -> dict:
@@ -105,14 +125,18 @@ def _dedupe(candidates: list, window: int):
 NO_PLAYER_REASON = "no tracked player within reach"
 
 
-def detect_contacts(shuttle_frames: list, tracks: list, fps: float, params: ContactParams = ContactParams()):
-    """Automatic contact candidates and every rejected turn with its reason. Nothing here is validated.
+def detect_contacts(shuttle_frames: Optional[list], tracks: list, fps: float, params: ContactParams = ContactParams(), *,
+                    track: Optional[O.ObservedTrack] = None, width: Optional[int] = None, height: Optional[int] = None):
+    """Automatic contact candidates and every rejected turn with its reason. Nothing here is confirmed.
 
-    A candidate needs a sharp, sustained turn of detected (not interpolated) shuttle points, a tracked player whose
-    box is within reach of the shuttle, and no stronger turn within the de-duplication window. The score is a
+    The turns are read from the sanitized observed-2d/v1 track, so a tracker jump removed there can never become a
+    contact. A candidate needs a sharp, sustained turn of detected (not interpolated) shuttle points, a tracked player
+    whose box is within reach of the shuttle, and no stronger turn within the de-duplication window. The score is a
     heuristic blend of turn size, box proximity and shuttle confidence. It is not calibrated and not a probability.
     """
-    points = _points(shuttle_frames)
+    if track is None:
+        track = O.sanitize({"frames": list(shuttle_frames or [])}, width=width, height=height, fps=fps)
+    points = _points(track)
     boxes = _boxes_by_frame(tracks)
     k = params.window_frames
     raw, rejected = [], []
@@ -143,7 +167,7 @@ def detect_contacts(shuttle_frames: list, tracks: list, fps: float, params: Cont
         if nearest is None:
             rejected.append({
                 "frame": frame,
-                "time_s": round(frame / fps, 3),
+                "time_s": round(track.time_of(frame), 3),
                 "reason": NO_PLAYER_REASON,
                 "turn_deg": round(turn, 1),
                 "nearest_player_px": None if closest is None else round(closest, 1),
@@ -157,7 +181,7 @@ def detect_contacts(shuttle_frames: list, tracks: list, fps: float, params: Cont
         )
         raw.append({
             "frame": frame,
-            "time_s": round(frame / fps, 3),
+            "time_s": round(track.time_of(frame), 3),
             "player": identity,
             "track_id": track_id,
             "status": "candidate",
@@ -192,9 +216,10 @@ def detect_contacts(shuttle_frames: list, tracks: list, fps: float, params: Cont
     return kept, rejected
 
 
-def contact_candidates(shuttle_frames: list, tracks: list, fps: float, params: ContactParams = ContactParams()):
+def contact_candidates(shuttle_frames: Optional[list], tracks: list, fps: float, params: ContactParams = ContactParams(), *,
+                       track: Optional[O.ObservedTrack] = None):
     """Candidate contacts and the number of turns that had no tracked player nearby."""
-    contacts, rejected = detect_contacts(shuttle_frames, tracks, fps, params)
+    contacts, rejected = detect_contacts(shuttle_frames, tracks, fps, params, track=track)
     return contacts, sum(1 for item in rejected if item["reason"] == NO_PLAYER_REASON)
 
 
@@ -207,7 +232,8 @@ def _nearest(items: list, frame: int, window: int) -> Optional[dict]:
     return best
 
 
-def apply_contact_reviews(contacts: list, reviews: list, fps: float, window: int) -> list:
+def apply_contact_reviews(contacts: list, reviews: list, fps: float, window: int,
+                          time_of: Optional[Callable[[int], float]] = None) -> list:
     """Apply manual decisions in the order they were saved. Rejected candidates stay listed but are not counted."""
     items = [dict(contact) for contact in contacts]
     added = 0
@@ -229,7 +255,7 @@ def apply_contact_reviews(contacts: list, reviews: list, fps: float, window: int
             {
                 "id": f"m{added}",
                 "frame": frame,
-                "time_s": round(frame / fps, 3),
+                "time_s": round(time_of(frame), 3) if time_of else round(frame / fps, 3),
                 "player": review.get("player"),
                 "track_id": None,
                 "status": "confirmed",
@@ -307,13 +333,16 @@ def build_shots(contacts: list, rallies: list, labels: list, window: int) -> lis
         target = _nearest(shots, int(label["frame"]), window)
         if target is None:
             continue
-        legacy = label["shot_type"] in LEGACY_SHOT_TYPES
-        if legacy:
-            # Old label outside the six product classes: keep it visible as unmapped, never as a stroke.
-            target.update(type="unknown", type_source="manual", type_reason=f"Legacy label '{label['shot_type']}' is not a product class.",
-                          validation="manual", label_id=label.get("id"), legacy_label=label["shot_type"])
+        value = label["shot_type"]
+        if value in SIX_CLASSES:
+            target.update(type=value, type_source="manual", type_reason="Labelled by a person.", validation="manual",
+                          label_id=label.get("id"), person_label_note=None)
         else:
-            target.update(type=label["shot_type"], type_source="manual", type_reason="Labelled by a person.", validation="manual", label_id=label.get("id"))
+            # "unknown" or a legacy label: a person's note, never a stroke type. The timeline keeps the six-class estimate,
+            # and an earlier six-class label of the same person on this shot is withdrawn by the later note.
+            target.update(type="unknown", type_source="none", type_reason="No shot type has been assigned.",
+                          validation="unclassified", label_id=label.get("id"), person_label_note=value,
+                          legacy_label=value if value in LEGACY_SHOT_TYPES else None)
         if label.get("player"):
             target["player"] = label["player"]
     return shots
@@ -333,38 +362,61 @@ def _smoothed(points: list) -> list:
     return result
 
 
-def _distance_m(samples: dict, fps: float) -> tuple:
-    """Approximate floor-plane distance from smoothed foot points, and the number of implausible jumps skipped."""
+def walk_distance(samples: dict, fps: float, max_speed_per_s: float) -> dict:
+    """Path length of one player's foot point: the one formula behind every player distance in the studio.
+
+    The foot points are smoothed by a centred 7-frame mean over frames within 3 of each frame. A step counts when it
+    spans at most 3 frames and is at most max_speed_per_s fast; faster steps are identity switches or calibration
+    errors and are counted as skipped. Units are those of the samples (floor metres, or image pixels).
+    """
     points = sorted((frame, value[0], value[1]) for frame, value in samples.items() if value[0] is not None and value[1] is not None)
     total, skipped = 0.0, 0
+    series: list[tuple[int, float]] = []
     previous = None
     for frame, x, y in _smoothed(points):
         if previous is not None:
             gap = frame - previous[0]
-            if gap <= 3:
+            if gap <= DISTANCE_MAX_GAP_FRAMES:
                 step = math.hypot(x - previous[1], y - previous[2])
-                if step <= MAX_PLAYER_SPEED_M_S / fps * gap:
+                if step <= max_speed_per_s / fps * gap:
                     total += step
                 else:
                     skipped += 1
         previous = (frame, x, y)
-    return round(total, 2), skipped
+        series.append((frame, total))
+    stride = max(1, math.ceil(len(series) / CHART_POINTS))
+    # The chart keeps the summary's precision (0.01 m or 0.01 px), so its last value is exactly the summary value.
+    chart = [[round(frame / fps, 3), round(value, 2)] for index, (frame, value) in enumerate(series)
+             if index % stride == 0 or index == len(series) - 1]
+    return {"total": round(total, 2), "jumps_skipped": skipped, "series": chart}
 
 
-def player_positions(tracks: list, identities: tuple, fps: float, calibrated: bool) -> dict:
+def _distance_m(samples: dict, fps: float) -> tuple:
+    """Approximate floor-plane distance from smoothed foot points, and the number of implausible jumps skipped."""
+    walk = walk_distance(samples, fps, MAX_PLAYER_SPEED_M_S)
+    return walk["total"], walk["jumps_skipped"]
+
+
+def player_positions(tracks: list, identities: tuple, fps: float, calibrated: bool, *, width: Optional[int] = None,
+                     height: Optional[int] = None) -> dict:
     samples = {identity: {} for identity in identities}
+    image = {identity: {} for identity in identities}
     confidences = {identity: [] for identity in identities}
     for track in tracks:
         for obs in track.get("observations", []):
             identity = obs.get("identity")
             if identity not in samples:
                 continue
+            frame = int(obs["frame"])
             x = obs.get("court_x_m") if calibrated else None
             y = obs.get("court_y_m") if calibrated else None
-            samples[identity][int(obs["frame"])] = (x, y, obs.get("identity_status"))
+            samples[identity][frame] = (x, y, obs.get("identity_status"))
+            if obs.get("x1") is not None and obs.get("x2") is not None and obs.get("y2") is not None:
+                image[identity][frame] = ((float(obs["x1"]) + float(obs["x2"])) / 2.0, float(obs["y2"]))
             if obs.get("identity_confidence") is not None:
                 confidences[identity].append(float(obs["identity_confidence"]))
     step = max(1, round(fps / POSITION_RATE_HZ))
+    diagonal = math.hypot(width, height) if width and height else None
     series = {}
     players = {}
     for identity, by_frame in samples.items():
@@ -373,96 +425,68 @@ def player_positions(tracks: list, identities: tuple, fps: float, calibrated: bo
             for frame, (x, y, status) in sorted(by_frame.items())
             if frame % step == 0
         ]
-        distance, skipped = _distance_m(by_frame, fps) if calibrated else (None, 0)
+        if calibrated:
+            walk = walk_distance(by_frame, fps, MAX_PLAYER_SPEED_M_S)
+            distance = {"value": walk["total"], "unit": "m", "basis": "floor-plane metres of the foot point (flat-floor approximation)",
+                        "jumps_skipped": walk["jumps_skipped"], "smoothing_frames": SMOOTHING_FRAMES,
+                        "max_step_rule": f"at most {MAX_PLAYER_SPEED_M_S} m per second on the floor plane"}
+        elif diagonal:
+            limit = MAX_PLAYER_IMAGE_SPEED_DIAG_S * diagonal
+            walk = walk_distance(image[identity], fps, limit)
+            distance = {"value": walk["total"], "unit": "px", "basis": "image pixels of the foot point (court not calibrated)",
+                        "jumps_skipped": walk["jumps_skipped"], "smoothing_frames": SMOOTHING_FRAMES,
+                        "max_step_rule": f"at most {MAX_PLAYER_IMAGE_SPEED_DIAG_S} frame diagonals per second ({limit:.0f} px/s)"}
+        else:
+            walk, distance = None, None
         players[identity] = {
             "frames_with_identity": len(by_frame),
-            "distance_m": distance,
-            "jumps_skipped": skipped,
+            "distance_m": walk["total"] if walk is not None and calibrated else None,
+            "jumps_skipped": walk["jumps_skipped"] if walk is not None else 0,
+            "distance": distance,
+            "distance_series": walk["series"] if walk is not None else [],
             "mean_identity_confidence": round(sum(confidences[identity]) / len(confidences[identity]), 3) if confidences[identity] else None,
         }
     return {"step_frames": step, "series": series, "players": players}
 
 
-MOTION_WINDOW_FRAMES = 3
-MOTION_MIN_POINTS = 4
-MOTION_METHOD = (
-    "Image-space shuttle motion: path length across detected, non-interpolated points within 3 frames of the contact "
-    "divided by elapsed time. Units are pixels per second; this is not physical shuttle speed."
-)
-
-
-
-def detected_image_points(shuttle_frames: list) -> dict:
-    """frame -> image (x, y) for detector observations only; interpolated points are not measurement evidence."""
-    return {
-        int(item["frame"]): (float(item["x"]), float(item["y"]))
-        for item in shuttle_frames
-        if item.get("visible") and not item.get("refined") and item.get("x") is not None and item.get("y") is not None
-    }
-
-
-def shot_motion(frame: int, image_points: dict, fps: float) -> dict:
-    """Average image-space path rate around a contact. This deliberately does not return metres or km/h."""
-    if fps <= 0:
-        return {"kmh": None, "px_per_s": None, "kind": None, "reason": "The frame rate is unknown."}
-    around = sorted(f for f in range(frame - MOTION_WINDOW_FRAMES, frame + MOTION_WINDOW_FRAMES + 1) if f in image_points)
-    if len(around) < MOTION_MIN_POINTS:
-        return {
-            "kmh": None,
-            "px_per_s": None,
-            "kind": None,
-            "reason": f"Only {len(around)} detected shuttle points lie within 3 frames of the contact; {MOTION_MIN_POINTS} are needed.",
-        }
-    first, last = around[0], around[-1]
-    elapsed = (last - first) / fps
-    path_px = sum(
-        math.hypot(
-            image_points[current][0] - image_points[previous][0],
-            image_points[current][1] - image_points[previous][1],
-        )
-        for previous, current in zip(around, around[1:])
-    )
-    if elapsed <= 0 or path_px <= 0:
-        return {"kmh": None, "px_per_s": None, "kind": None, "reason": "The detected points do not contain measurable image motion."}
-    return {
-        "kmh": None,
-        "px_per_s": round(path_px / elapsed, 1),
-        "kind": "image_space",
-        "points": len(around),
-        "method": MOTION_METHOD,
-        "physical_speed_available": False,
-    }
-
-
-def shot_motion_for(contact: Optional[dict], image_points: dict, fps: float) -> Optional[dict]:
-    """Image motion for a contact, with its human-confirmed or automatic-candidate basis."""
+def shot_speed(track: O.ObservedTrack, contact: Optional[dict]) -> Optional[dict]:
+    """Image-space speed for a contact, from the shared sanitized track, with its confirmed or candidate basis."""
     if contact is None:
         return None
-    result = shot_motion(contact["frame"], image_points, fps)
+    result = O.image_speed_around(track, int(contact["frame"]))
     result["basis"] = "confirmed_contact" if contact["status"] == "confirmed" else "automatic_candidate"
     return result
 
 
-def assess_speed(_court_status: str, available_physical: int = 0) -> dict:
-    """Match-level policy: px/s remains independent; 3D km/h is individually gated."""
+def _speed_stats(values: list) -> dict:
+    return {"count": len(values), "max_px_per_s": max(values) if values else None,
+            "mean_px_per_s": round(sum(values) / len(values), 1) if values else None}
+
+
+def assess_speed(_court_status: str, available_estimates: int = 0) -> dict:
+    """Match-level policy: image-space px/s stays on its own; km/h exists only in the gated Estimated 3D tier."""
+    config = O.DEFAULT_CONFIG
     return {
-        "status": "experimental_3d" if available_physical else "image_space",
+        "status": "experimental_3d" if available_estimates else "image_space",
         "kmh": None,
         "kind": "image_space",
-        "label": "Experimental 3D Speed Estimate — Not Radar Validated" if available_physical else "Physical speed unavailable",
+        "label": ESTIMATED_3D_LABEL if available_estimates else ESTIMATED_3D_UNAVAILABLE,
         "reason": (
-            f"{available_physical} confirmed shot(s) passed the experimental 3D evidence gates. Image-space px/s remains separate."
-            if available_physical
-            else "No confirmed shot passed the 3D camera, timestamp, tracking, reprojection and sensitivity gates."
+            f"{available_estimates} confirmed shot(s) passed every Estimated 3D gate. Image-space px/s stays separate."
+            if available_estimates
+            else "No shot passed the Estimated 3D gates (confirmed contact, presentation timestamps, tracking, independent "
+                 "3D camera, reprojection and sensitivity)."
         ),
         "conditions": [
-            {"id": "contact_confirmed", "checked": "per shot", "detail": "only confirmed contacts enter headline and player maxima"},
+            {"id": "contact_confirmed", "checked": "per shot", "detail": "official speed statistics use confirmed contacts only"},
             {
-                "id": "detected_points",
+                "id": "valid_steps",
                 "checked": "per shot",
-                "detail": f"at least {MOTION_MIN_POINTS} detected (not interpolated) shuttle points within {MOTION_WINDOW_FRAMES} frames of the contact",
+                "detail": f"at least {config.contact_min_points} TrackNet detections and {config.contact_min_steps} valid steps within "
+                          f"{config.contact_half_window} frames of the contact; tracker jumps are removed by {O.VERSION}",
             },
-            {"id": "physical_speed", "checked": "always", "detail": "km/h is not derived from monocular image pixels"},
+            {"id": "physical_speed", "checked": "always",
+             "detail": "km/h is never derived from image pixels; only the Estimated 3D tier carries km/h, and only when all its gates pass"},
         ],
     }
 
@@ -501,6 +525,9 @@ def build_match_document(
     params: ContactParams = ContactParams(),
     trajectory: Optional[dict] = None,
     session_corrections: Optional[list] = None,
+    estimated_3d: Optional[dict] = None,
+    track: Optional[O.ObservedTrack] = None,
+    compute_estimated_3d: bool = True,
 ) -> dict:
     video = results.get("video", {})
     fps = float(video.get("fps") or (tracks_doc or {}).get("fps") or 30.0)
@@ -511,20 +538,22 @@ def build_match_document(
     calibrated = court.get("status") == "calibrated"
     tracks = (tracks_doc or {}).get("tracks", [])
     window = max(1, round(params.dedupe_s * fps))
+    if track is None:
+        track = O.sanitize(shuttle_doc, width=video.get("width"), height=video.get("height"), fps=fps)
 
     def entries(kind: str) -> list:
         return [entry for entry in corrections if entry.get("type") == kind]
 
-    candidates, rejected_contacts = detect_contacts((shuttle_doc or {}).get("frames", []), tracks, fps, params)
+    candidates, rejected_contacts = detect_contacts(None, tracks, fps, params, track=track)
     turns_without_player = sum(1 for item in rejected_contacts if item["reason"] == NO_PLAYER_REASON)
     # Annotations from earlier analyses of the same video are transferred only when they match a candidate reliably.
     transferred, unmatched_annotations = reconcile_session_corrections(session_corrections or [], candidates, fps)
     corrections = transferred + corrections
-    contacts = apply_contact_reviews(candidates, entries("contact_review"), fps, window)
+    contacts = apply_contact_reviews(candidates, entries("contact_review"), fps, window, time_of=track.time_of)
     counted_contacts = [contact for contact in contacts if contact["status"] != "rejected"]
-    shuttle_list = (shuttle_doc or {}).get("frames", [])
+    observed_frames = [{"frame": frame, "visible": True, "refined": point.interpolated} for frame, point in track.points.items()]
     total_frames = int(video.get("frames") or 0) or None
-    derived = derive_rallies(counted_contacts, fps, shuttle_list, total_frames)
+    derived = derive_rallies(counted_contacts, fps, observed_frames, total_frames)
     if not derived:
         # No contacts to build a rally from: the shuttle-run candidates of the pipeline stay visible as uncertain.
         derived = [{**item, "status": "uncertain", "source": "shuttle_runs", "validated": False, "contact_ids": [],
@@ -542,30 +571,32 @@ def build_match_document(
         target = _nearest(shots, int(hit["frame"]), window)
         if target is not None:
             target["hit_frame"] = int(hit["hit_frame"])
-    shuttle_frames = (shuttle_doc or {}).get("frames", [])
-    image_points = detected_image_points(shuttle_frames)
     contact_by_id = {contact["id"]: contact for contact in contacts}
-    video_width = int(video.get("width") or 0)
-    video_height = int(video.get("height") or 0)
     for shot_index, shot in enumerate(shots):
         contact = contact_by_id.get(shot["contact_id"])
-        shot["speed"] = shot_motion_for(contact, image_points, fps)
+        shot["shot_id"] = f"{job_id}-frame-{shot['frame']}"
+        shot["time_s"] = round(track.time_of(int(shot["frame"])), 3)
+        shot["speed"] = shot_speed(track, contact)
         next_contact_frame = shots[shot_index + 1]["frame"] if shot_index + 1 < len(shots) else None
-        shot["physical_speed"] = estimate_shot_speed(
-            contact=contact,
-            shuttle_doc=shuttle_doc,
-            court_doc=court_doc,
-            width=video_width,
-            height=video_height,
-            next_contact_frame=next_contact_frame,
-        )
+        stored = (estimated_3d or {}).get(int(shot["frame"]))
+        if stored is not None:
+            shot["estimated_3d"] = stored
+        elif compute_estimated_3d:
+            shot["estimated_3d"] = estimate_monocular(contact=contact, track=track, court_doc=court_doc,
+                                                      next_contact_frame=next_contact_frame)
+        else:
+            shot["estimated_3d"] = {"mode": "estimated_monocular", "status": "not_computed", "label": ESTIMATED_3D_UNAVAILABLE,
+                                    "rejection_reasons": [], "speed_candidate_kmh": None, "speed_range_kmh": None}
+        shot["measured_3d"] = stereo.not_run_summary()
         record = (trajectory or {}).get(int(shot["frame"]))
+        estimate = None if record is None else {
+            "best_guess_label": record["best_guess_label"], "evidence_tier": record["evidence_tier"],
+            "evidence_quality": record["evidence_quality"], "review_status": record["review_status"],
+            "shot_id": record["shot_id"], "rule_version": record.get("rule_version"),
+            "top3": record.get("top3"), "label_kind": "trajectory_estimate_unverified"}
         if shot["validation"] == "manual":
             # A person's label is never replaced; the estimate is kept beside it for comparison only.
-            shot["trajectory"] = None if record is None else {
-                "best_guess_label": record["best_guess_label"], "evidence_tier": record["evidence_tier"],
-                "evidence_quality": record["evidence_quality"], "review_status": record["review_status"],
-                "shot_id": record["shot_id"]}
+            shot["trajectory"] = estimate
             continue
         if record is not None:
             shot.update(
@@ -573,30 +604,23 @@ def build_match_document(
                 type_reason=f"Trajectory estimate · unverified ({record['evidence_tier']}, {record['evidence_quality']} quality)",
                 validation="trajectory_unverified", model_version=record["rule_version"],
                 classifier={"top3": record["top3"], "review_status": record["review_status"]},
-                trajectory={"best_guess_label": record["best_guess_label"], "evidence_tier": record["evidence_tier"],
-                            "evidence_quality": record["evidence_quality"], "review_status": record["review_status"],
-                            "shot_id": record["shot_id"]},
+                trajectory=estimate,
             )
         else:
             shot.update(type="unknown", type_source="none", type_reason="No trajectory dataset row for this contact.",
                         validation="unclassified", model_version=None, classifier=None, trajectory=None)
+
+    def basis_values(basis: str) -> list:
+        return [shot["speed"]["px_per_s"] for shot in shots
+                if shot["speed"] and shot["speed"].get("basis") == basis and shot["speed"]["px_per_s"] is not None]
+
     measured = [shot["speed"]["px_per_s"] for shot in shots if shot["speed"] and shot["speed"]["px_per_s"] is not None]
-    measured_by_basis = {
-        basis: sum(1 for shot in shots if shot["speed"] and shot["speed"].get("basis") == basis and shot["speed"]["px_per_s"] is not None)
-        for basis in ("confirmed_contact", "automatic_candidate")
-    }
-    confirmed_motion = [
-        shot["speed"]["px_per_s"] for shot in shots
-        if shot["speed"] and shot["speed"].get("basis") == "confirmed_contact" and shot["speed"]["px_per_s"] is not None
-    ]
-    candidate_motion = [
-        shot["speed"]["px_per_s"] for shot in shots
-        if shot["speed"] and shot["speed"].get("basis") == "automatic_candidate" and shot["speed"]["px_per_s"] is not None
-    ]
-    physical_results = [
-        shot["physical_speed"] for shot in shots if shot.get("physical_speed", {}).get("status") == "available"
-    ]
-    positions = player_positions(tracks, identities, fps, calibrated)
+    official_values = basis_values("confirmed_contact")
+    candidate_values = basis_values("automatic_candidate")
+    available_3d = [shot["estimated_3d"] for shot in shots if (shot.get("estimated_3d") or {}).get("status") == "available"]
+    rejection_counts = Counter(reason for shot in shots if (shot.get("estimated_3d") or {}).get("status") != "available"
+                               for reason in (shot.get("estimated_3d") or {}).get("rejection_reasons", []))
+    positions = player_positions(tracks, identities, fps, calibrated, width=track.width, height=track.height)
 
     counted = [contact for contact in contacts if contact["status"] != "rejected"]
     # A player cannot hit twice in a row, so the second of two consecutive contacts by one player is suspect.
@@ -616,16 +640,98 @@ def build_match_document(
         rally["winner"] = None
         rally["winner_status"] = "not supported: the point outcome is not detected"
 
-    # Statistics count a person's labels only. Trajectory estimates are shown beside each contact, never as statistics.
-    by_type = {kind: sum(1 for shot in shots if shot["type"] == kind and shot["type_source"] == "manual") for kind in SHOT_TYPES}
+    # Statistics count a person's labels only. Trajectory estimates are counted apart and always called estimates.
+    by_type = {kind: sum(1 for shot in shots if shot["type"] == kind and shot["type_source"] == "manual") for kind in SIX_CLASSES}
+    by_type["unknown"] = sum(1 for shot in shots if shot.get("person_label_note") == "unknown")
+    estimates_by_type = {kind: sum(1 for shot in shots if (shot.get("trajectory") or {}).get("best_guess_label") == kind)
+                         for kind in SIX_CLASSES}
+    ordered = sorted(shots, key=lambda item: (item["time_s"], item["frame"]))
+    intervals = [b["time_s"] - a["time_s"] for a, b in zip(ordered, ordered[1:])
+                 if a.get("rally_id") is not None and a.get("rally_id") == b.get("rally_id")]
+    interval_mean = round(sum(intervals) / len(intervals), 3) if intervals else None
+
     player_summary = {}
+    distance_chart = {}
+    dashboard_players = {}
     for identity in identities:
+        own = [shot for shot in shots if shot["player"] == identity]
+        position = dict(positions["players"][identity])
+        series = position.pop("distance_series")
+        official = [shot["speed"]["px_per_s"] for shot in own
+                    if shot["speed"] and shot["speed"].get("basis") == "confirmed_contact" and shot["speed"]["px_per_s"] is not None]
+        estimates = {kind: sum(1 for shot in own if (shot.get("trajectory") or {}).get("best_guess_label") == kind) for kind in SIX_CLASSES}
+        top = max(SIX_CLASSES, key=lambda kind: (estimates[kind], -SIX_CLASSES.index(kind))) if any(estimates.values()) else None
+        most_frequent = None if top is None else {
+            "label": top, "count": estimates[top], "of": sum(estimates.values()),
+            "label_kind": "trajectory_estimate_unverified", "badge": "Trajectory estimate · unverified"}
         player_summary[identity] = {
-            **positions["players"][identity],
-            "hits": sum(1 for shot in shots if shot["player"] == identity),
+            **position,
+            "hits": len(own),
+            "confirmed_contacts": sum(1 for shot in own if shot["contact_status"] == "confirmed"),
+            "official_speed": {"basis": "confirmed contacts only", **_speed_stats(official)},
             "coverage": ((results.get("identity") or {}).get("coverage") or {}).get(identity),
-            "shots_by_type": {kind: sum(1 for shot in shots if shot["player"] == identity and shot["type"] == kind) for kind in SHOT_TYPES},
+            "estimates_by_type": estimates,
+            "most_frequent_estimate": most_frequent,
+            "person_labels_by_type": {kind: sum(1 for shot in own if shot["type_source"] == "manual" and shot["type"] == kind)
+                                      for kind in SIX_CLASSES},
         }
+        distance_chart[identity] = series
+        dashboard_players[identity] = {
+            "contacts": len(own),
+            "confirmed_contacts": player_summary[identity]["confirmed_contacts"],
+            "official_max_px_per_s": player_summary[identity]["official_speed"]["max_px_per_s"],
+            "official_mean_px_per_s": player_summary[identity]["official_speed"]["mean_px_per_s"],
+            "official_speed_count": player_summary[identity]["official_speed"]["count"],
+            "distance": position.get("distance"),
+            "most_frequent_estimate": most_frequent,
+        }
+
+    if calibrated:
+        contact_items = []
+        for shot in shots:
+            foot = player_foot_at(positions["series"].get(shot["player"], []), int(shot["frame"])) if shot["player"] else None
+            contact_items.append({"shot_id": shot["shot_id"], "timeline_id": shot["id"], "frame": shot["frame"], "player": shot["player"],
+                                  "x": None if foot is None else round(foot[0], 3), "y": None if foot is None else round(foot[1], 3)})
+        contact_positions = {"space": "court_m", "label": "player foot position at the contact (floor-plane metres)",
+                             "dimensions_m": COURT, "items": contact_items}
+    else:
+        contact_items = []
+        for shot in shots:
+            point = O.contact_point(track, int(shot["frame"]))
+            contact_items.append({"shot_id": shot["shot_id"], "timeline_id": shot["id"], "frame": shot["frame"], "player": shot["player"],
+                                  "x": None if point is None else round(point.x / track.width, 4),
+                                  "y": None if point is None else round(point.y / track.height, 4)})
+        contact_positions = {"space": "image_normalized", "label": "shuttle image position at the contact (not court metres)",
+                             "frame_size": [track.width, track.height], "items": contact_items}
+
+    rally_summary = summarise_rallies(
+        rallies,
+        {rally["id"]: [shot for shot in shots if shot["rally_id"] == rally["id"]] for rally in rallies},
+        tuple(identities),
+    )
+    speed_summary = {
+        "unit": "px/s",
+        "kind": "image_space",
+        "label": "Image-space speed (px/s)",
+        "official": {"basis": "confirmed contacts only", **_speed_stats(official_values)},
+        "candidates": {"basis": "automatic candidates; not part of the official statistics", **_speed_stats(candidate_values)},
+        "max_px_per_s": max(official_values) if official_values else None,
+        "candidate_max_px_per_s": max(candidate_values) if candidate_values else None,
+        "measured_shots": len(measured),
+        "by_basis": {"confirmed_contact": len(official_values), "automatic_candidate": len(candidate_values)},
+        "method": O.SPEED_METHOD,
+        "max_kmh": max((item["speed_candidate_kmh"] for item in available_3d), default=None),
+        "physical_measurements": len(available_3d),
+        "physical_label": ESTIMATED_3D_LABEL if available_3d else ESTIMATED_3D_UNAVAILABLE,
+        "estimated_3d": {
+            "mode": "estimated_monocular",
+            "label": ESTIMATED_3D_LABEL if available_3d else ESTIMATED_3D_UNAVAILABLE,
+            "available": len(available_3d),
+            "rejected": len(shots) - len(available_3d),
+            "rejection_reasons": dict(sorted(rejection_counts.items())),
+        },
+        "measured_3d": stereo.not_run_summary(),
+    }
 
     return {
         "schema": SCHEMA,
@@ -645,13 +751,14 @@ def build_match_document(
             "map_available": calibrated,
             "approximation": "flat floor; feet assumed on the floor" if calibrated else None,
         },
-        "speed": assess_speed(court.get("status") or "failed", len(physical_results)),
+        "speed": assess_speed(court.get("status") or "failed", len(available_3d)),
         "positions": {
             "court_available": calibrated,
             "reason": None if calibrated else "Court map unavailable: the court is not calibrated.",
             "step_frames": positions["step_frames"],
             "series": positions["series"],
         },
+        "observed_2d": {**track.summary(), **track.compact()},
         "contacts": {
             "method": CONTACT_METHOD.format(turn=params.min_turn_deg, window=params.window_frames, reach=params.reach_ratio, dedupe=params.dedupe_s),
             "status": "candidates",
@@ -673,16 +780,12 @@ def build_match_document(
             "items": rallies,
         },
         "shots": {
-            "classifier": {"available": False, "model_version": None, "reason": "No validated shot classifier is part of this build."},
+            "classifier": {"available": False, "model_version": None, "reason": "No shot classifier evaluated against ground truth is part of this build."},
             "types": list(SHOT_TYPES),
             "items": shots,
         },
         "summary": {
-            "rallies": summarise_rallies(
-                rallies,
-                {rally["id"]: [shot for shot in shots if shot["rally_id"] == rally["id"]] for rally in rallies},
-                tuple(identities),
-            ),
+            "rallies": rally_summary,
             "contacts": {
                 "counted": len(counted),
                 "candidates": sum(1 for contact in contacts if contact["status"] == "candidate"),
@@ -696,22 +799,42 @@ def build_match_document(
                 "by_type": by_type,
                 "labelled": sum(1 for shot in shots if shot["validation"] == "manual"),
                 "unknown": by_type["unknown"],
+                "person_notes": sum(1 for shot in shots if shot.get("person_label_note")),
+                "estimates_by_type": estimates_by_type,
+                "estimate_label_kind": "trajectory_estimate_unverified",
+                "interval_within_rally": {
+                    "mean_s": interval_mean,
+                    "count": len(intervals),
+                    "basis": "consecutive contacts inside the same rally candidate; gaps between rallies are excluded",
+                },
             },
-            "speed": {
-                "max_kmh": max((item["speed_first_observed_kmh"] for item in physical_results), default=None),
-                "physical_measurements": len(physical_results),
-                "physical_label": "Experimental 3D Speed Estimate — Not Radar Validated" if physical_results else "Physical speed unavailable",
-                "max_px_per_s": max(confirmed_motion) if confirmed_motion else None,
-                "candidate_max_px_per_s": max(candidate_motion) if candidate_motion else None,
-                "measured_shots": len(measured),
-                "by_basis": measured_by_basis,
-                "method": MOTION_METHOD,
-            },
+            "speed": speed_summary,
             "players": player_summary,
         },
+        "dashboard": {
+            "note": "Every value here is computed by the backend from the same sanitized track and timeline as the rest of this document.",
+            "players": dashboard_players,
+            "speed_panel": {
+                "unit": "px/s",
+                "official_count": len(official_values),
+                "official_mean_px_per_s": speed_summary["official"]["mean_px_per_s"],
+                "official_max_px_per_s": speed_summary["official"]["max_px_per_s"],
+                "candidate_count": len(candidate_values),
+                "candidate_mean_px_per_s": speed_summary["candidates"]["mean_px_per_s"],
+                "rally_mean_duration_s": rally_summary.get("mean_duration_s"),
+                "shot_interval_mean_s": interval_mean,
+                "shot_interval_basis": "within_rally",
+            },
+            "distance_chart": {
+                "unit": "m" if calibrated else "px",
+                "basis": "floor-plane metres of the foot point" if calibrated else "image pixels of the foot point",
+                "series": distance_chart,
+            },
+            "contact_positions": contact_positions,
+        },
+        "measured_3d": stereo.not_run_summary(),
         "ai": _ai_block(results, metrics, model_execution),
     }
-
 
 TRANSFERABLE_TYPES = ("contact_review", "shot_label", "hit_frame")
 TRANSFER_TOLERANCE_S = 0.5

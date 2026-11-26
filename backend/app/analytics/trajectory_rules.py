@@ -1,12 +1,14 @@
-"""trajectory-rules/v1: deterministic rule engine for the six-class stroke estimate of a contact candidate.
+"""trajectory-rules/v2: deterministic rule engine for the six-class stroke estimate of a contact candidate.
 
 Not a neural network and not a trained model. The same inputs always give the same output: no randomness, no
 timestamps, no per-video or per-sample constants. Every label is a best guess from the rule scores. Nothing here is a
 ground-truth label or a validated statistic.
 
 Inputs per contact
-- The shuttle trajectory from TrackNetV3 (raw, unchanged). A point is measured when it is visible, not refined and its
-  confidence reaches the threshold. A visible refined point is an InpaintNet interpolation.
+- The observed-2d/v1 track (app/analytics/observed2d.py): the raw TrackNetV3 / InpaintNet output after the shared
+  sanitizer. A point is measured ("detected") when it is a TrackNet detection that passed the sanitizer; an InpaintNet
+  fill is "interpolated". Tracker jumps are already removed there, with their reasons, and speeds come only from valid
+  steps between detections.
 - The contact frame, the player identity, and, when the court calibration is valid, the player's foot position on the
   floor plane in metres. The shuttle is never mapped to floor metres.
 
@@ -17,15 +19,21 @@ Evidence tiers (the same scorer runs for all three)
   a usable local speed and direction. Below that the contact is an integrity error, not a silent default.
 
 Units: speeds are image pixels per second. Positions are normalised by the frame size. No km/h is derived.
+
+v2 differs from v1 only in its input: v1 read the raw file and dropped steps above a fixed 5000 px/s; v2 reads the shared
+sanitized track (frame-diagonal-normalised jump rule, detected/interpolated kept apart, real timestamps for durations).
+The memberships, weights, tiers and gates are unchanged.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import math
-from dataclasses import dataclass
 from typing import Mapping, Optional, Sequence
 
-RULE_VERSION = "trajectory-rules/v1"
+from app.analytics import observed2d as O
+
+RULE_VERSION = "trajectory-rules/v2"
 CLASSES = ("smash", "clear", "drop", "drive", "net_shot", "lift")
 NET_Y_M = 6.70  # the net lies across the middle of the floor plane (court origin at the far edge, see court_coordinates)
 
@@ -33,18 +41,17 @@ CONFIG: dict = {
     "window_before": 12,       # frames before contact (0.4 s at 30 fps)
     "window_after": 45,        # frames after contact (1.5 s at 30 fps)
     "fallback_window": 6,      # frames either side for the contact fallback
-    "conf_threshold": 0.5,     # measured points below this are not used
-    "smoothing": 1,            # 1 = none; odd values average neighbouring points
     "offsets": (-2, 0, 2),     # contact shifts for the stability check
     "full_min_before": 6,
     "full_min_after": 12,
     "partial_min_total": 3,
     "fallback_min_points": 2,
     "min_margin": 0.08,        # best minus second best rule share
-    "accept_min_valid_ratio": 0.6,
-    "accept_max_interpolated_ratio": 0.2,
-    "max_plausible_px_s": 5000.0,  # faster steps are tracker jumps: left out of the speed features and counted
+    "high_quality_min_valid_ratio": 0.7,          # evidence quality "high": the smaller valid ratio reaches this
+    "high_quality_max_interpolated_ratio": 0.2,   # ... and at most this share of the window is interpolated
+    "medium_partial_min_valid_ratio": 0.3,        # a partial trajectory is "medium" from this valid ratio
 }
+# The confidence threshold, the jump rule and the smoothing belong to the shared sanitizer (observed2d.Config).
 
 # (feature, membership, weight). Memberships: ("ramp", lo, hi) rises 0->1; ("ramp_down", lo, hi) falls 1->0;
 # ("bump", a, b, c, d) trapezoid. A missing feature contributes nothing (it is listed in missing_features).
@@ -108,13 +115,7 @@ class PipelineIntegrityError(RuntimeError):
         self.reason = reason
 
 
-@dataclass(frozen=True)
-class Point:
-    frame: int
-    x: float
-    y: float
-    interpolated: bool
-    confidence: float = 1.0
+Point = O.ObservedPoint  # a point of the sanitized track
 
 
 def _clip(value: float) -> float:
@@ -141,52 +142,27 @@ def membership(value: Optional[float], spec: tuple) -> Optional[float]:
     raise ValueError(f"unknown membership {kind}")
 
 
-def build_track(shuttle_doc: Mapping, *, conf_threshold: float, smoothing: int = 1) -> dict[int, Point]:
-    """frame -> Point for every visible point. Measured points need confidence; interpolated points do not."""
-    points: dict[int, Point] = {}
-    for item in shuttle_doc.get("frames", []):
-        if not item.get("visible") or item.get("x") is None or item.get("y") is None:
-            continue
-        frame = int(item["frame"])
-        refined = bool(item.get("refined"))
-        if not refined and float(item.get("confidence") or 0.0) < conf_threshold:
-            continue
-        points[frame] = Point(frame, float(item["x"]), float(item["y"]), refined, float(item.get("confidence") or 0.0))
-    if smoothing > 1:
-        half = smoothing // 2
-        ordered = sorted(points)
-        smoothed: dict[int, Point] = {}
-        for index, frame in enumerate(ordered):
-            window = [points[f] for f in ordered[max(0, index - half): index + half + 1]]
-            smoothed[frame] = Point(frame, sum(p.x for p in window) / len(window), sum(p.y for p in window) / len(window),
-                                    points[frame].interpolated, points[frame].confidence)
-        points = smoothed
-    return points
+def build_track(shuttle_doc: Mapping, *, conf_threshold: Optional[float] = None, smoothing: Optional[int] = None,
+                width: Optional[int] = None, height: Optional[int] = None, fps: Optional[float] = None) -> O.ObservedTrack:
+    """The shared sanitized track (observed-2d/v1). Overrides exist for the sensitivity tool only."""
+    config = O.DEFAULT_CONFIG
+    overrides = {}
+    if conf_threshold is not None:
+        overrides["conf_threshold"] = float(conf_threshold)
+    if smoothing is not None:
+        overrides["smoothing_window"] = int(smoothing)
+    if overrides:
+        config = dataclasses.replace(config, **overrides)
+    return O.sanitize(shuttle_doc, width=width, height=height, fps=fps, config=config)
 
 
-def video_speed_reference(track: Mapping[int, Point], fps: float, cap: float = CONFIG["max_plausible_px_s"]) -> Optional[float]:
-    """95th percentile of measured speeds across the whole video: the reference for relative speed (deterministic)."""
-    speeds, _skipped = _speeds_counted([p for p in track.values() if not p.interpolated], fps, cap)
-    return _percentile(speeds, 95) if speeds else None
+def video_speed_reference(track: O.ObservedTrack, fps: Optional[float] = None) -> Optional[float]:
+    """95th percentile of the valid step speeds of the whole video: the reference for relative speeds."""
+    return O.speed_reference(track)
 
 
-def _speeds_counted(points: Sequence[Point], fps: float, cap: float = CONFIG["max_plausible_px_s"]) -> tuple[list[float], int]:
-    """Speeds of consecutive points with at most a two-frame gap. Steps above the plausible cap are counted, not used."""
-    out: list[float] = []
-    skipped = 0
-    for a, b in zip(points, points[1:]):
-        gap = b.frame - a.frame
-        if 0 < gap <= 2:
-            speed = math.hypot(b.x - a.x, b.y - a.y) / gap * fps
-            if speed > cap:
-                skipped += 1
-            else:
-                out.append(speed)
-    return out, skipped
-
-
-def _speeds(points: Sequence[Point], fps: float) -> list[float]:
-    return _speeds_counted(points, fps)[0]
+def _speeds(track: O.ObservedTrack, points: Sequence[O.ObservedPoint]) -> list[float]:
+    return [step.speed_px_s for step in O.steps(track, points)]
 
 
 def _percentile(values: Sequence[float], q: float) -> Optional[float]:
@@ -202,14 +178,10 @@ def _median(values: Sequence[float]) -> Optional[float]:
     return _percentile(values, 50) if values else None
 
 
-def _window_points(track: Mapping[int, Point], lo: int, hi: int) -> list[Point]:
-    return [track[f] for f in range(lo, hi + 1) if f in track]
-
-
-def _runs_missing(lo: int, hi: int, track: Mapping[int, Point]) -> int:
+def _runs_missing(lo: int, hi: int, track: O.ObservedTrack) -> int:
     runs, inside = 0, False
     for f in range(lo, hi + 1):
-        if f in track:
+        if f in track.points:
             inside = False
         elif not inside:
             runs += 1
@@ -228,21 +200,21 @@ def _direction_label(vx: float, vy: float) -> str:
     return f"{vertical}-{horizontal}"
 
 
-def extract(track: Mapping[int, Point], contact_frame: int, *, fps: float, width: int, height: int,
-            speed_ref: Optional[float], player_foot: Optional[tuple[float, float]], court_calibrated: bool,
-            config: Mapping = CONFIG, window_before: Optional[int] = None, window_after: Optional[int] = None) -> dict:
-    """Feature values for one contact. Missing features are None, never guessed."""
+def extract(track: O.ObservedTrack, contact_frame: int, *, fps: Optional[float] = None, width: Optional[int] = None,
+            height: Optional[int] = None, speed_ref: Optional[float], player_foot: Optional[tuple[float, float]],
+            court_calibrated: bool, config: Mapping = CONFIG, window_before: Optional[int] = None,
+            window_after: Optional[int] = None) -> dict:
+    """Feature values for one contact, read from the sanitized track. Missing features are None, never guessed."""
     before_n = int(window_before if window_before is not None else config["window_before"])
     after_n = int(window_after if window_after is not None else config["window_after"])
-    W, H = float(width), float(height)
+    W = float(width or track.width)
+    H = float(height or track.height)
     diagonal = math.hypot(W, H)
+    lo, hi = contact_frame - before_n, contact_frame + after_n
 
-    before = _window_points(track, contact_frame - before_n, contact_frame - 1)
-    after = _window_points(track, contact_frame + 1, contact_frame + after_n)
-    contact = track.get(contact_frame)
-    if contact is None:
-        near = [track[f] for f in (contact_frame - 2, contact_frame - 1, contact_frame + 1, contact_frame + 2) if f in track]
-        contact = near[0] if near else None
+    before = track.window(lo, contact_frame - 1)
+    after = track.window(contact_frame + 1, hi)
+    contact = O.contact_point(track, contact_frame)
     feats: dict = {}
     measured_before = sum(1 for p in before if not p.interpolated)
     measured_after = sum(1 for p in after if not p.interpolated)
@@ -250,16 +222,23 @@ def extract(track: Mapping[int, Point], contact_frame: int, *, fps: float, width
     feats["valid_points_after"] = measured_after
     feats["valid_ratio_before"] = round(measured_before / before_n, 4) if before_n else None
     feats["valid_ratio_after"] = round(measured_after / after_n, 4) if after_n else None
-    feats["missing_runs_after"] = _runs_missing(contact_frame + 1, contact_frame + after_n, track)
+    feats["missing_runs_after"] = _runs_missing(contact_frame + 1, hi, track)
     interpolated_total = sum(1 for p in before + after if p.interpolated)
     span = before_n + after_n
+    feats["detected_points"] = measured_before + measured_after
+    feats["detected_ratio"] = round((measured_before + measured_after) / span, 4) if span else None
     feats["interpolated_points"] = interpolated_total
     feats["interpolated_ratio"] = round(interpolated_total / span, 4) if span else None
     feats["contact_point_present"] = contact is not None
+    rejected = track.rejected_in(lo, hi)
+    feats["tracker_jumps_removed"] = sum(1 for item in rejected if item.reason == "tracker_jump")
+    feats["low_confidence_removed"] = sum(1 for item in rejected if item.reason == "low_confidence")
+    feats["implausible_steps"] = len(track.invalid_steps_in(lo, hi))
 
-    sp_before, skipped_before = _speeds_counted(before + ([contact] if contact else []), fps)
-    sp_after, skipped_after = _speeds_counted(([contact] if contact else []) + after, fps)
-    feats["implausible_steps_removed"] = skipped_before + skipped_after
+    sp_before = _speeds(track, before + ([contact] if contact else []))
+    sp_after = _speeds(track, ([contact] if contact else []) + after)
+    feats["speed_steps_before"] = len(sp_before)
+    feats["speed_steps_after"] = len(sp_after)
     feats["speed_before_median_px_s"] = _round(_median(sp_before))
     feats["speed_before_max_px_s"] = _round(max(sp_before) if sp_before else None)
     feats["speed_after_median_px_s"] = _round(_median(sp_after))
@@ -271,7 +250,7 @@ def extract(track: Mapping[int, Point], contact_frame: int, *, fps: float, width
 
     if contact is not None and after:
         first = after[: min(3, len(after))]
-        dt = (first[-1].frame - contact_frame) / fps
+        dt = track.duration(contact_frame, first[-1].frame)
         vx = (first[-1].x - contact.x) / dt if dt > 0 else 0.0
         vy = (first[-1].y - contact.y) / dt if dt > 0 else 0.0
         feats["initial_vx_px_s"] = round(vx, 1)
@@ -283,7 +262,7 @@ def extract(track: Mapping[int, Point], contact_frame: int, *, fps: float, width
         ys = [p.y for p in after] + [contact.y]
         min_y_point = min(after + [contact], key=lambda p: (p.y, p.frame))
         max_y = max(p.y for p in after)
-        feats["apex_time_s"] = round((min_y_point.frame - contact_frame) / fps, 4)
+        feats["apex_time_s"] = round(track.duration(contact_frame, min_y_point.frame), 4)
         feats["rise_norm"] = round((contact.y - min(ys)) / H, 4)
         feats["descent_norm"] = round((max_y - contact.y) / H, 4)
         end = after[-1]
@@ -295,9 +274,9 @@ def extract(track: Mapping[int, Point], contact_frame: int, *, fps: float, width
         feats["length_norm"] = round(length / diagonal, 4) if length > 0 else 0.0
         feats["straightness"] = round(disp / length, 4) if length > 0 else None
         feats["curvature_rad"] = _curvature(chain)
-        last_run_end = _observed_flight_end(contact_frame, after, track)
-        feats["flight_s"] = round((last_run_end - contact_frame) / fps, 4)
-        feats["flight_truncated_by_window"] = last_run_end >= contact_frame + after_n
+        last_run_end = _observed_flight_end(contact_frame, after, track.config.max_missing_frames + 1)
+        feats["flight_s"] = round(track.duration(contact_frame, last_run_end), 4)
+        feats["flight_truncated_by_window"] = last_run_end >= hi
     else:
         for key in ("initial_vx_px_s", "initial_vy_px_s", "initial_speed_px_s", "initial_direction",
                     "horizontal_component_px_s", "vertical_component_px_s", "apex_time_s", "rise_norm", "descent_norm",
@@ -346,11 +325,11 @@ def _curvature(chain: Sequence[Point]) -> Optional[float]:
     return round(sum(turns) / len(turns), 4)
 
 
-def _observed_flight_end(contact_frame: int, after: Sequence[Point], track: Mapping[int, Point]) -> int:
-    """Last frame of the flight: gaps of up to three frames between points are bridged, a longer gap ends it."""
+def _observed_flight_end(contact_frame: int, after: Sequence[Point], link: int) -> int:
+    """Last frame of the flight: a frame step of at most ``link`` is bridged (3 missing frames), a longer gap ends it."""
     last = contact_frame
     for p in after:
-        if p.frame - last > 4:
+        if p.frame - last > link:
             break
         last = p.frame
     return last
@@ -402,20 +381,21 @@ def evidence_tier(features: Mapping, *, has_local_points: int, has_speed_local: 
 
 def evidence_quality(tier: str, features: Mapping, config: Mapping = CONFIG) -> str:
     valid = min(features.get("valid_ratio_before") or 0.0, features.get("valid_ratio_after") or 0.0)
-    if tier == "full_trajectory" and valid >= 0.7 and (features.get("interpolated_ratio") or 0.0) <= config["accept_max_interpolated_ratio"]:
+    if (tier == "full_trajectory" and valid >= config["high_quality_min_valid_ratio"]
+            and (features.get("interpolated_ratio") or 0.0) <= config["high_quality_max_interpolated_ratio"]):
         return "high"
-    if tier == "full_trajectory" or (tier == "partial_trajectory" and valid >= 0.3):
+    if tier == "full_trajectory" or (tier == "partial_trajectory" and valid >= config["medium_partial_min_valid_ratio"]):
         return "medium"
     return "low"
 
 
 def classify_contact(
-    track: Mapping[int, Point],
+    track: O.ObservedTrack,
     contact_frame: int,
     *,
-    fps: float,
-    width: int,
-    height: int,
+    fps: Optional[float] = None,
+    width: Optional[int] = None,
+    height: Optional[int] = None,
     speed_ref: Optional[float],
     player_foot: Optional[tuple[float, float]],
     court_calibrated: bool,
@@ -425,11 +405,10 @@ def classify_contact(
     """The full record payload for one contact: tier, scores, top 3, review status, reasons and warnings."""
     kwargs = dict(fps=fps, width=width, height=height, speed_ref=speed_ref, player_foot=player_foot,
                   court_calibrated=court_calibrated, config=config)
-    local = [track[f] for f in range(contact_frame - config["fallback_window"], contact_frame + config["fallback_window"] + 1)
-             if f in track]
-    local_speeds = _speeds(local, fps)
-    anchor = track.get(contact_frame)
-    later = [track[f] for f in range(contact_frame + 1, contact_frame + config["fallback_window"] + 1) if f in track]
+    local = track.window(contact_frame - config["fallback_window"], contact_frame + config["fallback_window"])
+    local_speeds = _speeds(track, local)
+    anchor = track.points.get(contact_frame)
+    later = track.window(contact_frame + 1, contact_frame + config["fallback_window"])
     # A direction exists when a later local point differs from the contact point (or the contact has no point of its own).
     local_direction = bool(later) and (anchor is None or any((p.x, p.y) != (anchor.x, anchor.y) for p in later))
     main = extract(track, contact_frame, **kwargs)
@@ -440,8 +419,8 @@ def classify_contact(
     if tier == "contact_fallback":
         features = extract(track, contact_frame, window_before=config["fallback_window"],
                            window_after=config["fallback_window"], **kwargs)
-        features["valid_points_before"] = sum(1 for f in range(contact_frame - config["fallback_window"], contact_frame) if f in track)
-        features["valid_points_after"] = sum(1 for f in range(contact_frame + 1, contact_frame + config["fallback_window"] + 1) if f in track)
+        features["valid_points_before"] = len(track.window(contact_frame - config["fallback_window"], contact_frame - 1))
+        features["valid_points_after"] = len(track.window(contact_frame + 1, contact_frame + config["fallback_window"]))
     else:
         features = main
 
@@ -471,9 +450,12 @@ def classify_contact(
     if len(set(offset_labels.values())) > 1:
         reasons.append("candidate changes when the contact is shifted by two frames")
     warnings = []
-    if features.get("implausible_steps_removed"):
-        warnings.append(f"{features['implausible_steps_removed']} implausible shuttle step(s) above "
-                        f"{int(config['max_plausible_px_s'])} px/s left out of the speed features (tracker jump)")
+    if features.get("tracker_jumps_removed"):
+        warnings.append(f"{features['tracker_jumps_removed']} tracker-jump point(s) removed by the observed-2D sanitizer "
+                        f"(entry faster than {track.config.max_speed_diag_per_s} frame diagonals per second, "
+                        f"{track.max_speed_px_s:.0f} px/s here)")
+    if features.get("implausible_steps"):
+        warnings.append(f"{features['implausible_steps']} implausible step(s) without a return are kept out of the speeds")
     if features.get("flight_truncated_by_window"):
         warnings.append("flight continues to the end of the window; flight duration is a lower bound")
     if features.get("missing_runs_after", 0) > 0 and features.get("valid_ratio_after", 0) < 0.5:

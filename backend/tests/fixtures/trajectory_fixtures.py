@@ -62,8 +62,10 @@ def _contact_start(x: float = 960.0, y: float = 520.0) -> tuple[float, float]:
 
 # Each stroke: the shuttle moves away from the contact with the velocity pattern its class is known for.
 STROKES: dict[str, dict] = {
-    # Fast, steep downward, short and straight: the shuttle ends at the floor within half a second.
-    "smash": {"segments": [(0.45, 700.0, 1400.0, 1.0)], "player_y": BACK_COURT_NEAR_PLAYER},
+    # Fast, steep downward, short and straight: the shuttle ends at the floor within half a second. The contact starts
+    # higher in the image so that the whole flight stays inside the 1920 x 1080 frame (the sanitizer rejects points
+    # outside the image, as TrackNet never produces them).
+    "smash": {"segments": [(0.45, 700.0, 1400.0, 1.0)], "player_y": BACK_COURT_NEAR_PLAYER, "start": (960.0, 400.0)},
     # Rises clearly to a high apex, then falls slowly: long flight, deep.
     "clear": {"segments": [(0.6, 350.0, -400.0, 1.0), (0.9, 350.0, 250.0, 1.0)], "player_y": BACK_COURT_NEAR_PLAYER},
     # Decelerates sharply after the contact and drops short near the net. Fast in before window is set by before_segments.
@@ -84,16 +86,16 @@ DEFAULT_BEFORE = (0.5, -200.0, -150.0)  # the incoming shuttle moves towards the
 def stroke_points(label: str) -> dict[int, tuple]:
     spec = STROKES[label]
     before = spec.get("before", DEFAULT_BEFORE)
+    start = spec.get("start", _contact_start())
     points = {}
     if before:
         duration, vx, vy = before
         steps = int(round(duration * FPS))
-        x, y = _contact_start()
+        x, y = start
         x0, y0 = x - vx * duration, y - vy * duration
         for index in range(steps + 1):
             frame = CONTACT - steps + index
             points[frame] = (x0 + vx * index / FPS, y0 + vy * index / FPS, 1.0)
-    start = _contact_start()
     points.update(_segments(start, spec["segments"]))
     return points
 

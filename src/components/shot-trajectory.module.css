@@ -1,0 +1,431 @@
+/* Shot trajectory panel. It uses the broadcast dashboard tokens (set on .board) with fallbacks, so it also works alone. */
+
+.card {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--bd-line, #17294a);
+  border-radius: 6px;
+  background: linear-gradient(180deg, #0c1829 0%, var(--bd-panel, #0b1625) 100%);
+  color: var(--bd-text, #e7eefb);
+  font-size: 12px;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+.title::before {
+  content: "";
+  width: 3px;
+  height: 14px;
+  border-radius: 1px;
+  background: var(--bd-cyan, #35b8ff);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--bd-line-soft, #1b3152);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.seg button {
+  padding: 4px 9px;
+  border: 0;
+  background: transparent;
+  color: var(--bd-soft, #a9b8cd);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.seg button + button {
+  border-left: 1px solid var(--bd-line-soft, #1b3152);
+}
+
+.seg button[aria-pressed="true"] {
+  background: rgba(53, 184, 255, 0.16);
+  color: var(--bd-text, #e7eefb);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border: 1px solid var(--bd-line-soft, #1b3152);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--bd-soft, #a9b8cd);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.chip strong {
+  color: var(--bd-text, #e7eefb);
+  font-weight: 700;
+}
+
+.chip[data-tone="ok"] {
+  border-color: rgba(61, 220, 132, 0.4);
+  color: #7ee8a8;
+}
+
+.chip[data-tone="warn"] {
+  border-color: rgba(242, 201, 76, 0.4);
+  color: var(--bd-warn, #f2c94c);
+}
+
+.chip[data-tone="muted"] {
+  color: var(--bd-muted, #6f84a3);
+}
+
+.chipKey {
+  color: var(--bd-muted, #6f84a3);
+}
+
+.chipMeta {
+  color: var(--bd-muted, #6f84a3);
+  font-variant-numeric: tabular-nums;
+}
+
+.swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+/* ---------- stage: the picture keeps its own proportions ---------- */
+
+.stage {
+  position: relative;
+  height: 220px;
+  border: 1px solid #2a4368;
+  border-radius: 4px;
+  background-color: #061021;
+  background-image:
+    linear-gradient(rgba(53, 184, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(53, 184, 255, 0.06) 1px, transparent 1px);
+  background-size: 32px 32px;
+  overflow: hidden;
+}
+
+.svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.breakMark line {
+  stroke: #8fa3bd;
+  stroke-width: 2;
+}
+
+.readout {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  max-width: calc(100% - 16px);
+  padding: 4px 7px;
+  border-radius: 4px;
+  background: rgba(5, 11, 21, 0.86);
+  color: var(--bd-text, #e7eefb);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+/* ---------- side view: the illustrated template ---------- */
+
+.sideBg {
+  fill: #0f2129;
+}
+
+.sideTitle {
+  fill: #6ee7c1;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.sideContactWord {
+  fill: #f6d27a;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.net {
+  fill: #e6f1f5;
+}
+
+.netFlag {
+  fill: none;
+  stroke: #e6f1f5;
+  stroke-width: 3;
+}
+
+.ground {
+  stroke: #7fd6bf;
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.sideLabel {
+  fill: #b9d3cc;
+  font-size: 13px;
+}
+
+.sideCaption {
+  fill: #8fa8c0;
+  font-size: 11px;
+}
+
+.sidePath {
+  fill: none;
+  stroke: #6ee7c1;
+  stroke-width: 5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.templates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.templateButton {
+  padding: 4px 10px;
+  border: 1px solid var(--bd-line-soft, #1b3152);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--bd-soft, #a9b8cd);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.templateButton[aria-checked="true"] {
+  border-color: #6ee7c1;
+  background: rgba(110, 231, 193, 0.12);
+  color: var(--bd-text, #e7eefb);
+}
+
+/* ---------- notes, legend, footer ---------- */
+
+.caption {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 6px;
+  margin: 0;
+  color: #9fb4cc;
+  font-size: 10.5px;
+  line-height: 1.35;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+  pointer-events: none;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  color: var(--bd-soft, #a9b8cd);
+  font-size: 11px;
+}
+
+.legend i {
+  display: inline-block;
+  width: 12px;
+  height: 3px;
+  margin-right: 5px;
+  border-radius: 2px;
+  vertical-align: middle;
+}
+
+.legendDashed {
+  text-decoration: underline dashed var(--bd-muted, #6f84a3);
+}
+
+.dotContact,
+.dotLast {
+  width: 8px !important;
+  height: 8px !important;
+  border-radius: 50%;
+}
+
+.dotContact {
+  background: #ff6b6b;
+}
+
+.dotLast {
+  background: transparent !important;
+  border: 1px dashed #ffffff;
+  box-sizing: border-box;
+}
+
+.footer {
+  display: grid;
+  gap: 4px;
+  padding-top: 7px;
+  border-top: 1px solid var(--bd-line, #17294a);
+  color: var(--bd-muted, #6f84a3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+}
+
+.warn {
+  color: var(--bd-warn, #f2c94c);
+}
+
+.empty {
+  margin: 0;
+  padding: 36px 0;
+  color: var(--bd-muted, #6f84a3);
+  text-align: center;
+}
+
+.skeleton {
+  height: 212px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #0c1829 0%, #14243d 50%, #0c1829 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+
+  to {
+    background-position: -100% 0;
+  }
+}
+
+@media (max-width: 600px) {
+  .stage,
+  .skeleton {
+    height: 200px;
+  }
+}
+
+.note {
+  margin: 0;
+  color: var(--bd-muted, #6f84a3);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.frameToggle {
+  padding: 4px 9px;
+  border: 1px solid var(--bd-line-soft, #1b3152);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--bd-soft, #a9b8cd);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.frameToggle[aria-pressed="true"] {
+  background: rgba(53, 184, 255, 0.16);
+  color: var(--bd-text, #e7eefb);
+}
+
+.ringRefined,
+.ringInterp {
+  display: inline-block;
+  width: 8px !important;
+  height: 8px !important;
+  margin-right: 5px;
+  border-radius: 50%;
+  box-sizing: border-box;
+  vertical-align: middle;
+}
+
+.ringRefined {
+  border: 2px dotted var(--bd-soft, #a9b8cd);
+  background: transparent;
+}
+
+.ringInterp {
+  border: 1px dashed var(--bd-muted, #6f84a3);
+  background: transparent;
+}
+
+.warning {
+  margin: 0;
+  color: var(--bd-warn, #f2c94c);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* A point the observed-2D check removed: drawn as a grey cross, never joined to the path. */
+.crossRejected {
+  position: relative;
+  display: inline-block;
+  width: 9px !important;
+  height: 9px !important;
+  margin-right: 5px;
+  background: transparent !important;
+  vertical-align: middle;
+}
+
+.crossRejected::before,
+.crossRejected::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 4px;
+  width: 1.5px;
+  height: 9px;
+  background: #8fa3bd;
+}
+
+.crossRejected::before {
+  transform: rotate(45deg);
+}
+
+.crossRejected::after {
+  transform: rotate(-45deg);
+}
+
+.rejectedMark {
+  pointer-events: auto;
+}

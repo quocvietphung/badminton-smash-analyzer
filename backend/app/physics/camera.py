@@ -67,6 +67,23 @@ class CameraCalibration:
             self.notes,
         )
 
+    def with_principal_shift(self, dx_px: float, dy_px: float) -> "CameraCalibration":
+        intrinsic = self.intrinsic.copy()
+        intrinsic[0, 2] += dx_px
+        intrinsic[1, 2] += dy_px
+        return CameraCalibration(
+            intrinsic,
+            self.rotation_world_to_camera,
+            self.camera_center_m,
+            self.width,
+            self.height,
+            self.source,
+            self.independent_3d,
+            self.reprojection_rms_px,
+            self.focal_uncertainty_fraction,
+            self.notes,
+        )
+
     def as_dict(self) -> dict:
         return {
             "source": self.source,

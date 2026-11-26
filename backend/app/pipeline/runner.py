@@ -37,6 +37,7 @@ from app.ai.shuttle_tracking.tracknet import (
     resize_to_model,
 )
 from app.ai.visualization.identity_overlay import draw_identity_frame
+from app.analytics import observed2d as O
 from app.pipeline.execution import build_model_execution
 from app.pipeline.audio import AudioSource, attach_audio, has_audio_stream, sample_audio_source
 from app.pipeline.derive import (
@@ -450,6 +451,11 @@ class AnalysisRunner:
         writer = H264Writer(
             os.path.join(output_dir, ANNOTATED_NAME), info.width, info.height, info.fps, self.options.crf, self.options.preset
         )
+        # The same shared observed-2d/v1 track the match document uses (the raw file is written before and only read):
+        # the drawn trail and the rally candidates skip the points it rejected.
+        observed = O.sanitize(
+            _read_json(os.path.join(output_dir, "shuttle_trajectory.json")), width=info.width, height=info.height, fps=info.fps
+        )
 
         def render(index, image, players, shuttle, trail, outline):
             self._check_deadline()
@@ -473,6 +479,7 @@ class AnalysisRunner:
                 frames=iter_frames(input_path),
                 render=render,
                 writer=writer,
+                observed=observed,
             )
         finally:
             writer.close()
@@ -635,7 +642,7 @@ def _write_derived(output_dir, job_id, source, info: VideoInfo, output: DeriveOu
         "fps": fps,
         "status": "heuristic_candidates",
         "validated": False,
-        "method": "heuristic: runs of detected shuttle frames separated by short gaps; "
+        "method": f"heuristic: runs of TrackNet detections kept by the {O.VERSION} check separated by short gaps; "
                   f"gap at most {RALLY_GAP_S} s, minimum {RALLY_MIN_S} s",
         "evaluation": EVALUATION_NOTE,
         "count": len(output.rallies),

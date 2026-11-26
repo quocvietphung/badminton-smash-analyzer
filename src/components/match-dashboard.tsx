@@ -13,8 +13,6 @@ import {
   hitsSoFar,
   isShotType,
   buildGroundTruth,
-  confirmedMotionByPlayer,
-  confirmedMotionHeadline,
   parseMatchDocument,
   pointAt,
   rallyAt,
@@ -34,7 +32,8 @@ import type { MatchDocument, MatchShot, TrajectoryEstimate } from "@/lib/match/t
 import type { StudioLanguage } from "@/lib/studio-types";
 import styles from "./match-dashboard.module.css";
 import { ShuttleTrail } from "./shuttle-trail";
-import { ShotEstimateDrawer, estimateBadge, estimateLabel, num, qualityText } from "./shot-estimate";
+import { DatasetExport, ShotEstimateDrawer, estimateBadge, estimateLabel, qualityText } from "./shot-estimate";
+import { useSelectedShotId } from "@/lib/match/shot-selection";
 import { TRAJECTORY_COPY } from "@/lib/match/trajectory-copy";
 
 type Props = { apiBase: string; jobId: string; language: StudioLanguage; revision: number };
@@ -49,15 +48,18 @@ function colour(player: string | null | undefined): string {
   return (player && IDENTITY_COLOURS[player]) || "#9aa4b2";
 }
 
+/** The headline speed: the backend's official value (confirmed contacts only). Nothing is recomputed here. */
 function motionText(doc: MatchDocument, copy: MatchCopy): { main: string; note: string } {
-  if (doc.summary.speed.max_kmh !== null) {
-    return { main: `${doc.summary.speed.max_kmh.toFixed(1)} km/h`, note: copy.physicalAvailable };
+  const speed = doc.summary.speed;
+  if ((speed.estimated_3d?.available ?? 0) > 0 && speed.max_kmh !== null) {
+    return { main: `${speed.max_kmh.toFixed(1)} km/h`, note: copy.physicalAvailable };
   }
-  const confirmed = confirmedMotionHeadline(doc.shots.items);
-  if (confirmed.pxPerSecond !== null) {
-    return { main: `${confirmed.pxPerSecond} px/s`, note: `${copy.physicalUnavailable}. ${confirmed.count} ${copy.speedShots}. ${copy.speedConfirmed}. ${copy.speedReasonHeight}` };
+  const official = speed.official ?? null;
+  const officialMax = motionValue(official ? official.max_px_per_s : speed.max_px_per_s);
+  if (officialMax !== null) {
+    return { main: `${officialMax} px/s`, note: `${copy.imageSpaceSpeed} · ${official?.count ?? speed.by_basis.confirmed_contact} ${copy.speedShots} · ${copy.speedConfirmed}. ${copy.physicalUnavailable}. ${copy.speedReasonHeight}` };
   }
-  if (motionValue(doc.summary.speed.candidate_max_px_per_s) !== null) {
+  if ((speed.candidates?.count ?? 0) > 0 || motionValue(speed.candidate_max_px_per_s) !== null) {
     return { main: copy.speedUnavailable, note: copy.speedCandidatesOnly };
   }
   return { main: copy.speedUnavailable, note: copy.speedReasonNoConfirmed };
@@ -161,7 +163,7 @@ export function MatchDashboard({ apiBase, jobId, language, revision }: Props) {
 
   const estimateAt = (frame: number): TrajectoryEstimate | undefined => (estimates ? estimates[frame] : undefined);
   const [time, setTime] = useState(0);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useSelectedShotId(jobId);
   const [labelType, setLabelType] = useState<ShotType>("unknown");
   const [labelPlayer, setLabelPlayer] = useState<string>("");
   const [save, setSave] = useState<Save>({ phase: "idle" });
@@ -284,9 +286,12 @@ export function MatchDashboard({ apiBase, jobId, language, revision }: Props) {
   const { doc, frame, rally, shot, hits, contacts, states } = view;
   const motion = motionText(doc, copy);
   const summary = doc.summary;
-  const playerMotion = confirmedMotionByPlayer(doc.shots.items, doc.players);
+  // Per-player maxima are the backend's official values (confirmed contacts only).
+  const playerMotion: Record<string, number | null> = Object.fromEntries(
+    doc.players.map((player) => [player, motionValue(doc.dashboard?.players[player]?.official_max_px_per_s)]),
+  );
   const currentMotion = motionValue(shot?.speed?.px_per_s);
-  const currentPhysical = shot?.physical_speed.status === "available" ? shot.physical_speed : null;
+  const currentPhysical = shot?.estimated_3d?.status === "available" ? shot.estimated_3d : null;
   const selectedShot = doc.shots.items.find((item) => item.id === selected) ?? null;
   const selectedEstimate = selectedShot && estimates ? estimates[selectedShot.frame] : undefined;
   const selectedContact = selectedShot ? doc.contacts.items.find((item) => item.id === selectedShot.contact_id) ?? null : null;
@@ -334,7 +339,7 @@ export function MatchDashboard({ apiBase, jobId, language, revision }: Props) {
           playsInline
           preload="metadata"
         />
-        <ShuttleTrail apiBase={apiBase} jobId={jobId} frame={frame} language={language} />
+        <ShuttleTrail observed={doc.observed_2d ?? null} frame={frame} language={language} />
         <div className={styles.hudStrip}>
           <div className={styles.hudMetric}>
             <span className={styles.overlayLabel}>{copy.rallyTime}</span>
@@ -349,8 +354,8 @@ export function MatchDashboard({ apiBase, jobId, language, revision }: Props) {
           <div className={styles.hudMetric}>
             <span className={styles.overlayLabel}>{copy.cardSpeed}</span>
             <strong className={styles.overlayClock}>
-              {currentPhysical?.speed_first_observed_kmh !== null && currentPhysical?.speed_first_observed_kmh !== undefined
-                ? `${currentPhysical.speed_first_observed_kmh.toFixed(1)}`
+              {currentPhysical?.speed_candidate_kmh !== null && currentPhysical?.speed_candidate_kmh !== undefined
+                ? `${currentPhysical.speed_candidate_kmh.toFixed(1)}`
                 : currentMotion !== null ? `${currentMotion}` : "–"}
               <small>{currentPhysical ? " km/h" : " px/s"}</small>
             </strong>
@@ -408,6 +413,9 @@ export function MatchDashboard({ apiBase, jobId, language, revision }: Props) {
 
         <article className={styles.subPanel}>
           <h4 className={styles.subTitle}>{copy.timelineTitle}</h4>
+          {estimates !== null ? (
+            <DatasetExport href={apiUrl(apiBase, `/api/v1/analyses/${encodeURIComponent(jobId)}/shot-trajectory/export.jsonl`)} language={language} />
+          ) : null}
           {estimates === null ? (
             <p className={styles.notice}>
               {TRAJECTORY_COPY[language].notBuilt}{" "}
@@ -439,11 +447,11 @@ export function MatchDashboard({ apiBase, jobId, language, revision }: Props) {
                       <>
                         <span className={styles.labelChip} data-label={label ?? ""}>{label ? shotTypeText(label, copy) : tc.notBuilt}</span>
                         <span className={styles.badge} data-tone={badge.tone}>{badge.text}</span>
-                        {est ? (
-                          <span className={styles.overlayMeta}>{`${num(est.features.speed_after_median_px_s)} ${tc.pxs} · ${tc.quality}: ${qualityText(est.evidence_quality, language)}`}</span>
-                        ) : motionValue(item.speed?.px_per_s) !== null ? (
-                          <span className={styles.overlayMeta}>{motionValue(item.speed?.px_per_s)} {tc.pxs}</span>
-                        ) : null}
+                        <span className={styles.overlayMeta}>
+                          {`${motionValue(item.speed?.px_per_s) ?? "–"} ${tc.pxs}`}
+                          {est || item.trajectory ? ` · ${tc.quality}: ${qualityText((est?.evidence_quality ?? item.trajectory?.evidence_quality) as "high" | "medium" | "low", language)}` : ""}
+                        </span>
+                        {item.person_label_note ? <span className={styles.flag} title={copy.personNote}>{`${copy.personNote}: ${item.person_label_note}`}</span> : null}
                         {est && est.review_status === "needs_review" ? <span className={styles.warnFlag} title={tc.needsReview}>⚠ {tc.needsReview}</span> : null}
                       </>
                     );
@@ -476,29 +484,43 @@ export function MatchDashboard({ apiBase, jobId, language, revision }: Props) {
                 <dt>{copy.evidenceSpeed}</dt>
                 <dd>
                   {motionValue(selectedShot.speed?.px_per_s) !== null
-                    ? `${motionValue(selectedShot.speed?.px_per_s)} px/s · ${copy.speedEstimated}. ${copy.speedReasonHeight}`
+                    ? `${motionValue(selectedShot.speed?.px_per_s)} px/s · ${selectedShot.speed?.basis === "confirmed_contact" ? copy.speedConfirmed : copy.speedAutomatic}. ${copy.speedReasonHeight}`
                     : selectedShot.speed?.reason ?? copy.speedReasonNoConfirmed}
                 </dd>
-                <dt>{selectedShot.physical_speed.status === "available" ? copy.physicalAvailable : copy.physicalUnavailable}</dt>
+                <dt>{copy.estimated3dTitle}</dt>
                 <dd>
-                  {selectedShot.physical_speed.status === "available"
-                    ? `${copy.physicalFirstObserved}: ${selectedShot.physical_speed.speed_first_observed_kmh?.toFixed(1)} km/h`
-                    : `${copy.physicalReasons}: ${selectedShot.physical_speed.reason_codes.join(", ") || "–"}`}
+                  {selectedShot.estimated_3d?.status === "available" && selectedShot.estimated_3d.speed_candidate_kmh !== null
+                    ? `${copy.physicalFirstObserved}: ${selectedShot.estimated_3d.speed_candidate_kmh.toFixed(1)} km/h`
+                    : `${copy.physicalUnavailable} · ${copy.physicalReasons}: ${(selectedShot.estimated_3d?.rejection_reasons ?? []).join(", ") || selectedShot.estimated_3d?.status || "–"}`}
                 </dd>
-                {selectedShot.physical_speed.status === "available" ? (
+                {selectedShot.estimated_3d?.status === "available" ? (
                   <>
-                    <dt>{copy.physicalAtNet}</dt>
-                    <dd>{selectedShot.physical_speed.speed_at_net_kmh !== null ? `${selectedShot.physical_speed.speed_at_net_kmh.toFixed(1)} km/h` : "–"}</dd>
-                    <dt>{copy.physicalAtContact}</dt>
-                    <dd>{selectedShot.physical_speed.speed_at_contact_extrapolated_kmh !== null ? `${selectedShot.physical_speed.speed_at_contact_extrapolated_kmh.toFixed(1)} km/h` : "–"}</dd>
-                    <dt>{copy.physicalUncertainty}</dt>
-                    <dd>{selectedShot.physical_speed.uncertainty_kmh ? `${selectedShot.physical_speed.uncertainty_kmh[0].toFixed(1)}–${selectedShot.physical_speed.uncertainty_kmh[1].toFixed(1)} km/h` : "–"}</dd>
-                    <dt>{copy.physicalMethod}</dt>
-                    <dd>{selectedShot.physical_speed.method}</dd>
-                    <dt>{copy.physicalCalibration}</dt>
-                    <dd>{selectedShot.physical_speed.calibration.source ?? "–"}</dd>
+                    <dt>{copy.estimated3dRange}</dt>
+                    <dd>{selectedShot.estimated_3d.speed_range_kmh ? `${selectedShot.estimated_3d.speed_range_kmh[0].toFixed(1)}–${selectedShot.estimated_3d.speed_range_kmh[1].toFixed(1)} km/h` : "–"}</dd>
+                    <dt>{copy.estimated3dQuality}</dt>
+                    <dd>{selectedShot.estimated_3d.quality ?? "–"}</dd>
                   </>
                 ) : null}
+                {selectedShot.estimated_3d?.reprojection_rms_px != null ? (
+                  <>
+                    <dt>{copy.estimated3dReprojection}</dt>
+                    <dd>{`${selectedShot.estimated_3d.reprojection_rms_px} / ${selectedShot.estimated_3d.reprojection_p95_px ?? "–"} px`}</dd>
+                  </>
+                ) : null}
+                {selectedShot.estimated_3d?.parameter_spread_percent != null ? (
+                  <>
+                    <dt>{copy.estimated3dSpread}</dt>
+                    <dd>{`${selectedShot.estimated_3d.parameter_spread_percent} %`}</dd>
+                  </>
+                ) : null}
+                {selectedShot.estimated_3d?.gates?.length ? (
+                  <>
+                    <dt>{copy.estimated3dGates}</dt>
+                    <dd>{selectedShot.estimated_3d.gates.map((gate) => `${gate.passed ? "✓" : "✗"} ${gate.id}`).join(" · ")}</dd>
+                  </>
+                ) : null}
+                <dt>{copy.measured3dTitle}</dt>
+                <dd>{selectedShot.measured_3d?.status === "not_run" || !selectedShot.measured_3d ? copy.measured3dNotRun : selectedShot.measured_3d.status}</dd>
                 <dt>{copy.evidenceTypeReason}</dt>
                 <dd>{selectedShot.type_reason ?? "–"}</dd>
                 <dt>{copy.evidenceSource}</dt>
@@ -636,6 +658,15 @@ export function MatchDashboard({ apiBase, jobId, language, revision }: Props) {
             <dt>{copy.statLabelled}</dt>
             <dd>{summary.shots.labelled}</dd>
           </dl>
+          {summary.shots.estimates_by_type ? (
+            <dl className={styles.facts}>
+              <dt className={styles.groupTitle}>{copy.statsEstimates}</dt>
+              <dd />
+              {SHOT_TYPES.filter((type) => type !== "unknown").map((type) => (
+                <FactRow key={type} label={copy.shotTypes[type]} value={summary.shots.estimates_by_type?.[type] ?? 0} />
+              ))}
+            </dl>
+          ) : null}
           <dl className={styles.facts}>
             <dt className={styles.groupTitle}>{copy.statsPlayers}</dt>
             <dd />

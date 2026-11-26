@@ -167,33 +167,8 @@ export function motionValue(pxPerSecond: number | null | undefined): number | nu
   return typeof pxPerSecond === "number" && Number.isFinite(pxPerSecond) ? Math.round(pxPerSecond) : null;
 }
 
-/** Headline image motion from confirmed contacts only. Automatic candidates never enter it. */
-export function confirmedMotionHeadline(shots: ReadonlyArray<Pick<MatchShot, "speed">>): { pxPerSecond: number | null; count: number } {
-  let best: number | null = null;
-  let count = 0;
-  for (const shot of shots) {
-    const pxPerSecond = motionValue(shot.speed?.px_per_s);
-    if (pxPerSecond === null || shot.speed?.basis !== "confirmed_contact") continue;
-    count += 1;
-    if (best === null || pxPerSecond > best) best = pxPerSecond;
-  }
-  return { pxPerSecond: best, count };
-}
-
-/** Confirmed image-motion maximum for each logical player. */
-export function confirmedMotionByPlayer(
-  shots: ReadonlyArray<Pick<MatchShot, "player" | "speed">>,
-  players: string[],
-): Record<string, number | null> {
-  const result: Record<string, number | null> = Object.fromEntries(players.map((player) => [player, null]));
-  for (const shot of shots) {
-    if (!shot.player || !(shot.player in result) || shot.speed?.basis !== "confirmed_contact") continue;
-    const value = motionValue(shot.speed.px_per_s);
-    const current = result[shot.player];
-    if (value !== null && (current === null || value > current)) result[shot.player] = value;
-  }
-  return result;
-}
+// The official speed statistics (confirmed contacts only) are computed on the backend: summary.speed.official and
+// dashboard.players[*].official_max_px_per_s. The studio displays them and never recomputes them.
 
 export const GROUND_TRUTH_SCHEMA = "smashlab.ground-truth/v1";
 

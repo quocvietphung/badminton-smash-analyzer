@@ -1,8 +1,9 @@
 """coach-dataset/v1: one JSON document per analysis, for the AI Coach and for the single export.
 
 It holds only values this analysis measured: the player movement on the court map (floor metres when the court is
-calibrated, image pixels otherwise), the shot timeline of P1 and P2 with trajectory estimates, image-space speeds in px/s,
-and the evidence behind each estimate. Nothing is validated, and speeds are never converted to km/h.
+calibrated, image pixels otherwise), the shot timeline of P1 and P2 with trajectory estimates, image-space speeds in px/s
+from the shared observed-2d/v1 track, and the evidence behind each estimate. Official speed values use confirmed contacts
+only. Nothing is evaluated against ground truth, and speeds are never converted to km/h.
 
 Built deterministically from this job's files only. A person's shot label is reported as a person's label, and an
 estimate is reported as an unverified estimate.
@@ -96,19 +97,28 @@ def build(*, job_id: str, match_doc: Mapping, records: Sequence[Mapping], tracks
             labels[r["best_guess_label"]] += 1  # every contact has an estimate; a person's label is counted apart
             if r.get("manual_label") in R.CLASSES:
                 manual[r["manual_label"]] = manual.get(r["manual_label"], 0) + 1
-        speeds_after = [r["features"].get("speed_after_median_px_s") for r in player_shots]
-        speeds_after = [float(v) for v in speeds_after if isinstance(v, (int, float))]
+        official = [float(r["image_speed"]["px_per_s"]) for r in player_shots
+                    if (r.get("image_speed") or {}).get("px_per_s") is not None and r.get("contact_status") == "confirmed"]
+        candidate = [float(r["image_speed"]["px_per_s"]) for r in player_shots
+                     if (r.get("image_speed") or {}).get("px_per_s") is not None and r.get("contact_status") != "confirmed"]
         stats = players_block.get(player, {})
         distance = stats.get("distance_m") if calibrated else None
         per_player[player] = {
             "contacts": len(player_shots),
+            "confirmed_contacts": sum(1 for r in player_shots if r.get("contact_status") == "confirmed"),
             "shot_estimates": labels,
+            "shot_estimates_kind": "trajectory_estimate_unverified",
             "manual_labels": manual,
-            "speed_after_contact_median_px_s": round(median(speeds_after), 1) if speeds_after else None,
-            "speed_after_contact_max_px_s": round(max(float(r["features"].get("speed_after_max_px_s") or 0) for r in player_shots), 1) if player_shots else None,
+            "image_speed_official_px_s": {"basis": "confirmed contacts only", "count": len(official),
+                                          "max": round(max(official), 1) if official else None,
+                                          "median": round(median(official), 1) if official else None},
+            "image_speed_candidates_px_s": {"basis": "automatic candidates, not official", "count": len(candidate),
+                                            "max": round(max(candidate), 1) if candidate else None,
+                                            "median": round(median(candidate), 1) if candidate else None},
             "movement": {
                 "court_distance_m": distance,
                 "court_distance_basis": "floor-plane metres, flat-floor approximation" if calibrated else None,
+                "distance": stats.get("distance"),
                 "image_path_px": image[player]["path_px"],
                 "image_observations": image[player]["observations"],
                 "image_jumps_skipped": image[player]["jumps_skipped"],
@@ -138,8 +148,11 @@ def build(*, job_id: str, match_doc: Mapping, records: Sequence[Mapping], tracks
     }
 
     shots = []
+    timeline = {item.get("frame"): item for item in (match_doc.get("shots", {}) or {}).get("items", [])}
     for r in records:
+        shot = timeline.get(r["frame"]) or {}
         shots.append({
+            "shot_id": r.get("shot_id"),
             "time_s": r["timestamp_s"],
             "frame": r["frame"],
             "player": r.get("player"),
@@ -147,6 +160,11 @@ def build(*, job_id: str, match_doc: Mapping, records: Sequence[Mapping], tracks
             "estimate_label": r["best_guess_label"],
             "label_kind": "trajectory_estimate_unverified",
             "manual_label": r.get("manual_label"),
+            "person_label_note": r.get("person_label_note"),
+            "image_speed_px_s": (r.get("image_speed") or {}).get("px_per_s"),
+            "image_speed_basis": (r.get("image_speed") or {}).get("basis"),
+            "estimated_3d_status": (shot.get("estimated_3d") or {}).get("status"),
+            "estimated_3d_reasons": (shot.get("estimated_3d") or {}).get("rejection_reasons", []),
             "speed_after_median_px_s": r["features"].get("speed_after_median_px_s"),
             "speed_after_max_px_s": r["features"].get("speed_after_max_px_s"),
             "initial_direction": r["features"].get("initial_direction"),
@@ -161,10 +179,19 @@ def build(*, job_id: str, match_doc: Mapping, records: Sequence[Mapping], tracks
         })
     shots.sort(key=lambda item: (item["time_s"], item["frame"]))
 
+    speed = (match_doc.get("summary", {}) or {}).get("speed", {}) or {}
     return {
         "schema": SCHEMA,
         "job_id": job_id,
         "rule_version": R.RULE_VERSION,
+        "observed_2d_version": (match_doc.get("observed_2d") or {}).get("version"),
+        "speed_summary": {
+            "unit": "px/s",
+            "official": speed.get("official"),
+            "candidates": speed.get("candidates"),
+            "estimated_3d": speed.get("estimated_3d"),
+            "measured_3d": speed.get("measured_3d"),
+        },
         "source": {
             "name": results.get("source", {}).get("name") if isinstance(results.get("source"), dict) else None,
             "fps": fps,
@@ -184,7 +211,9 @@ def build(*, job_id: str, match_doc: Mapping, records: Sequence[Mapping], tracks
         },
         "limitations": [
             "Shot labels are rule-based trajectory estimates, not validated. Do not treat them as facts.",
-            "Speeds are image pixels per second. They are not physical speeds and are never km/h.",
+            "Speeds are image-space pixels per second. They are not physical speeds and are never km/h.",
+            "Official speed values use confirmed contacts only; automatic candidates are listed apart.",
+            "Estimated 3D is a one-camera experiment and is rejected unless every gate passes; Measured 3D needs two cameras.",
             "Player movement uses floor-plane metres only when the court is calibrated; otherwise image pixels.",
             "Nothing here is a technique or form score.",
         ],

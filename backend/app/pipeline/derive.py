@@ -5,6 +5,11 @@ file. Raw outputs are never edited, so the whole derivation can be repeated afte
 
 Rally segmentation here is a labelled heuristic (runs of detected shuttle frames separated by short gaps). It is
 not validated against ground truth. Shot classification is not implemented, so the shots section is "unsupported".
+
+When the runner passes the shared observed-2d/v1 track (``observed``), the rally candidates and the shuttle trail drawn
+into the annotated video use only the points that track kept: a removed tracker jump, a low-confidence or an
+out-of-frame point is neither drawn as the shuttle nor counted as a detection, and the trail breaks where the track's
+run breaks. The raw shuttle file is still only read.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from app.ai.court_detection.court import COURT_LENGTH_M, COURT_WIDTH_M, NET_Y_M
 from app.ai.player_detection.bytetrack import ByteTracker
 from app.ai.player_detection.identity import Candidate, IdentityConfig, IdentityManager, IdentityState
 from app.ai.player_detection.tracker import TrackObservation
+from app.analytics import observed2d as O
 from app.services import corrections as corrections_service
 
 COURT_MARGIN_SIDE_M = 2.0
@@ -134,9 +140,20 @@ def _passes_filter(box: np.ndarray, court: CourtInfo, height: int, h_court_from_
     return (box[3] - box[1]) >= MIN_HEIGHT_RATIO * height
 
 
-def rally_candidates(shuttle, fps: float) -> list[dict]:
-    """Heuristic rally candidates: runs of detected (not interpolated) shuttle frames with short gaps."""
-    detected = [s.frame for s in shuttle if s.visible and not s.refined]
+def rally_candidates(shuttle, fps: float, observed: Optional[O.ObservedTrack] = None) -> list[dict]:
+    """Heuristic rally candidates: runs of detected (not interpolated) shuttle frames with short gaps.
+
+    With ``observed`` only the TrackNet detections the observed-2d/v1 track kept count, so a removed tracker jump or a
+    rejected point never starts or extends a rally, and the times are that track's timestamps.
+    """
+    if observed is not None:
+        detected = sorted(frame for frame, point in observed.points.items() if point.source == O.DETECTED)
+        time_of = observed.time_of
+        basis = f"TrackNet detections kept by the {O.VERSION} check"
+    else:
+        detected = [s.frame for s in shuttle if s.visible and not s.refined]
+        time_of = (lambda frame: frame / fps) if fps else (lambda frame: 0.0)
+        basis = "detected shuttle frames"
     if not detected or not fps:
         return []
     gap_frames = RALLY_GAP_S * fps
@@ -148,20 +165,20 @@ def rally_candidates(shuttle, fps: float) -> list[dict]:
             runs.append([frame])
     rallies = []
     for run in runs:
-        duration = (run[-1] - run[0]) / fps
+        duration = time_of(run[-1]) - time_of(run[0])
         if duration < RALLY_MIN_S:
             continue
         rallies.append({
             "index": len(rallies) + 1,
             "start_frame": run[0],
             "end_frame": run[-1],
-            "start_s": round(run[0] / fps, 3),
-            "end_s": round(run[-1] / fps, 3),
+            "start_s": round(time_of(run[0]), 3),
+            "end_s": round(time_of(run[-1]), 3),
             "duration_s": round(duration, 3),
             "detected_shuttle_frames": len(run),
             "status": "candidate",
             "validated": False,
-            "method": f"heuristic: detected shuttle frames separated by gaps of at most {RALLY_GAP_S} s, minimum {RALLY_MIN_S} s",
+            "method": f"heuristic: {basis} separated by gaps of at most {RALLY_GAP_S} s, minimum {RALLY_MIN_S} s",
             "ground_truth": None,
             "evaluation": "not evaluated (no ground truth)",
         })
@@ -221,8 +238,13 @@ def derive(
     frames: Optional[Iterable[tuple[int, np.ndarray]]] = None,
     render: Optional[Callable[[int, np.ndarray, list[dict], Optional[object], list, Optional[list]], np.ndarray]] = None,
     writer=None,
+    observed: Optional[O.ObservedTrack] = None,
 ) -> DeriveOutput:
-    """Run the derivation. ``frames`` yields (index, BGR image) for appearance features and rendering."""
+    """Run the derivation. ``frames`` yields (index, BGR image) for appearance features and rendering.
+
+    ``observed`` is the shared observed-2d/v1 track of the same shuttle file; with it the drawn trail and the rally
+    candidates skip the points that track rejected.
+    """
     entries = corrections_doc.get("entries", [])
     forced_by_frame = corrections_service.forced_identities(entries)
     mode = resolve_mode(entries, config.mode, detections, court, width, height)
@@ -239,6 +261,7 @@ def derive(
     diagonal = math.hypot(width, height)
     shuttle_by_frame = {s.frame: s for s in shuttle}
     trail: deque = deque(maxlen=8)
+    trail_segment: Optional[int] = None
     last_visible = -(10 ** 9)
     track_records: dict[int, dict] = {}
     identity_states: list[tuple[int, list[IdentityState]]] = []
@@ -288,6 +311,13 @@ def derive(
         frames_processed = index + 1
         if config.render and render is not None and image is not None and writer is not None:
             shuttle_sample = shuttle_by_frame.get(index)
+            if observed is not None and shuttle_sample is not None and shuttle_sample.visible:
+                kept = observed.points.get(index)
+                if kept is None:
+                    shuttle_sample = None  # rejected by the observed-2d check: not drawn as the shuttle
+                elif kept.segment != trail_segment:
+                    trail.clear()  # the track's run broke (gap or implausible step): start a new trail
+                    trail_segment = kept.segment
             if shuttle_sample is not None and shuttle_sample.visible:
                 trail.append((shuttle_sample.x, shuttle_sample.y))
                 last_visible = index
@@ -311,7 +341,7 @@ def derive(
         identity_events=identity_manager.events,
         identity_segments=identity_segments(identity_states),
         movement_observations=movement_observations,
-        rallies=rally_candidates(shuttle, fps),
+        rallies=rally_candidates(shuttle, fps, observed),
         shuttle_stats=shuttle_stats,
         frames_processed=frames_processed,
         corrections_applied=corrections_applied,

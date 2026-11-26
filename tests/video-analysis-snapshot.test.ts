@@ -78,28 +78,38 @@ test("the snapshot carries no physical number when the production gate has no ac
   assert.deepEqual(snapshot.physicalSpeed.measurements, []);
 });
 
-test("only a gated available physical result is shared with the coach", () => {
+test("only an Estimated 3D result that passed every gate is shared with the coach", () => {
   const match = {
-    summary: { speed: { physical_measurements: 1, physical_label: "Experimental 3D Speed Estimate — Not Radar Validated" } },
-    shots: { items: [{
-      frame: 52,
-      time_s: 1.733,
-      physical_speed: {
-        status: "available",
-        speed_first_observed_kmh: 104,
-        speed_at_net_kmh: 71,
-        speed_at_contact_extrapolated_kmh: 108,
-        uncertainty_kmh: [100, 109],
-        method: "RK4 robust fit",
-        calibration: { source: "synthetic test" },
-        quality: { reprojection_rms_px: 1.2 },
+    summary: { speed: { physical_measurements: 1, physical_label: "Estimated 3D — monocular experimental",
+      estimated_3d: { mode: "estimated_monocular", label: "Estimated 3D — monocular experimental", available: 1, rejected: 1, rejection_reasons: { contact_not_confirmed: 1 } } } },
+    shots: { items: [
+      {
+        frame: 52,
+        time_s: 1.733,
+        player: "P1",
+        contact_status: "confirmed",
+        estimated_3d: {
+          mode: "estimated_monocular", status: "available", label: "Estimated 3D — monocular experimental", speed_candidate_kmh: 104,
+          speed_range_kmh: [100, 109], reprojection_rms_px: 1.2, method: "RK4 robust fit", rejection_reasons: [],
+        },
       },
-    }] },
+      {
+        frame: 90,
+        time_s: 3.0,
+        player: "P2",
+        contact_status: "candidate",
+        estimated_3d: { mode: "estimated_monocular", status: "rejected", label: "Physical trajectory unavailable", speed_candidate_kmh: null,
+          speed_range_kmh: null, rejection_reasons: ["contact_not_confirmed"] },
+      },
+    ] },
   } as unknown as MatchDocument;
   const snapshot = buildVideoAnalysisSnapshot(results(), META, match);
   assert.equal(snapshot.physicalSpeed.status, "available");
+  assert.equal(snapshot.physicalSpeed.measurements.length, 1, "a rejected estimate never reaches the coach");
   assert.equal(snapshot.physicalSpeed.measurements[0].firstObservedKmh, 104);
+  assert.deepEqual(snapshot.physicalSpeed.measurements[0].uncertaintyKmh, [100, 109]);
   assert.equal(snapshot.physicalSpeed.measurements[0].notRadarValidated, true);
+  assert.equal(videoAnalysisSchema.safeParse(snapshot).success, true);
 });
 
 test("the request schema accepts a built snapshot and bounds the movement list", () => {
@@ -110,12 +120,12 @@ test("the request schema accepts a built snapshot and bounds the movement list",
 });
 
 test("the Coach gets trajectory estimates as unverified, sourced estimates, apart from the person's labels", () => {
-  const estimate = { best_guess_label: "clear", evidence_tier: "full_trajectory", evidence_quality: "high", review_status: "needs_review", shot_id: "x" };
+  const estimate = { best_guess_label: "clear", evidence_tier: "full_trajectory", evidence_quality: "high", review_status: "needs_review", shot_id: "x", rule_version: "trajectory-rules/v2" };
   const shot = (id: string, over: Record<string, unknown>) => ({
     id, contact_id: `c${id}`, rally_id: null, frame: Number(id) * 10, time_s: Number(id), player: "P1", type: "unknown",
     confidence: null, evidence_source: "contact candidate", contact_status: "candidate", model_version: null,
     validation: "unclassified", type_source: "none", type_reason: null, flags: [], speed: null, classifier: null,
-    trajectory: null, physical_speed: { status: "unavailable", reason_codes: [] }, ...over,
+    trajectory: null, estimated_3d: { status: "rejected", rejection_reasons: [] }, ...over,
   });
   const match = {
     shots: { items: [
@@ -127,9 +137,9 @@ test("the Coach gets trajectory estimates as unverified, sourced estimates, apar
   } as unknown as MatchDocument;
   const snapshot = buildVideoAnalysisSnapshot(results(), META, match);
   const classification = snapshot.shotClassification;
-  assert.equal(classification.source, "trajectory_rules_v1_unverified");
+  assert.equal(classification.source, "trajectory_rules_unverified");
   assert.equal(classification.unverified, true);
-  assert.equal(classification.model, "trajectory-rules/v1");
+  assert.equal(classification.model, "trajectory-rules/v2", "the model is the rule version the records were built with");
   assert.equal(classification.predicted, 1, "one estimate");
   assert.equal(classification.userLabels, 1, "one person's label, counted apart");
   assert.equal(classification.predictions[0].label, "clear");

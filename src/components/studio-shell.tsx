@@ -238,13 +238,16 @@ export default function StudioShell() {
             <SessionLibrary language={language} onOpenJob={openJob} onOpenCoach={openCoach} />
           ) : null}
 
-          <div className={view === "coach" ? styles.coachWorkspace : styles.floatingCoach}>
-            <AnalysisChatbot
-              variant={view === "coach" ? "workspace" : "floating"}
-              language={language}
-              onOpenWorkspace={() => navigate("coach")}
-            />
-          </div>
+          {/* On the analysis page the floating Coach stays away: the results header has "Ask the coach", and the card would cover the trajectory and the shot list. */}
+          {view === "analysis" ? null : (
+            <div className={view === "coach" ? styles.coachWorkspace : styles.floatingCoach}>
+              <AnalysisChatbot
+                variant={view === "coach" ? "workspace" : "floating"}
+                language={language}
+                onOpenWorkspace={() => navigate("coach")}
+              />
+            </div>
+          )}
 
           <footer className={styles.footer}><ShieldCheck /><span>{copy.footer}</span></footer>
         </main>

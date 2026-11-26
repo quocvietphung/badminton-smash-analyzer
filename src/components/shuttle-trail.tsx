@@ -1,66 +1,51 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { artifactUrl, fetchJson } from "@/lib/local-ai/client";
+import { useMemo, useState } from "react";
 import { TRAJECTORY_COPY } from "@/lib/match/trajectory-copy";
+import type { Observed2DBlock } from "@/lib/match/types";
 import type { StudioLanguage } from "@/lib/studio-types";
 import styles from "./match-dashboard.module.css";
-
-type TrajectoryFrame = { frame: number; x: number | null; y: number | null; visible: boolean; refined: boolean; confidence?: number | null };
-type TrajectoryFile = { source_width: number; source_height: number; fps: number; frames: TrajectoryFrame[] };
 
 const TRAIL_SECONDS = 1.2;
 
 /**
- * A fading glowing trail of the shuttle's image positions, drawn over the video. It shows TrackNet detections only:
- * interpolated frames and low-confidence points are left out, and the trail is not a flight measurement.
+ * A fading glowing trail of the shuttle's image positions, drawn over the video. It shows the TrackNet detections the
+ * backend's observed-2d check kept: InpaintNet fills and removed tracker jumps are left out, the line breaks where the
+ * backend's run breaks, and the trail is not a flight measurement.
  */
 export function ShuttleTrail({
-  apiBase,
-  jobId,
+  observed,
   frame,
   language,
 }: {
-  apiBase: string;
-  jobId: string;
+  observed: Observed2DBlock | null;
   frame: number;
   language: StudioLanguage;
 }) {
   const copy = TRAJECTORY_COPY[language];
-  const [file, setFile] = useState<TrajectoryFile | null>(null);
   const [enabled, setEnabled] = useState(true);
-
-  useEffect(() => {
-    let active = true;
-    fetchJson(artifactUrl(apiBase, jobId, "shuttle_trajectory.json"))
-      .then((value) => {
-        if (active) setFile(value as TrajectoryFile);
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, [apiBase, jobId]);
+  const byFrame = useMemo(() => new Map((observed?.points ?? []).map((point) => [point[0], point])), [observed]);
 
   const trail = useMemo(() => {
-    if (!file) return null;
-    const span = Math.round(TRAIL_SECONDS * file.fps);
-    const points: { x: number; y: number; age: number }[] = [];
+    if (!observed) return null;
+    const span = Math.round(TRAIL_SECONDS * (observed.fps || 30));
+    const points: { x: number; y: number; age: number; segment: number }[] = [];
     for (let f = frame - span; f <= frame; f += 1) {
-      const item = file.frames[f];
-      if (!item || !item.visible || item.refined || item.x === null || item.y === null) continue;
-      if ((item.confidence ?? 0) < 0.5) continue;
-      points.push({ x: item.x, y: item.y, age: (frame - f) / span });
+      const item = byFrame.get(f);
+      if (!item || item[3] !== "d") continue;
+      points.push({ x: item[1], y: item[2], age: (frame - f) / span, segment: item[4] });
     }
     return points;
-  }, [file, frame]);
+  }, [observed, byFrame, frame]);
 
-  if (!file || !trail) return null;
+  if (!observed || !trail) return null;
 
-  const width = file.source_width;
-  const height = file.source_height;
+  const [width, height] = observed.frame_size;
   const head = trail.at(-1);
-  const segments = trail.slice(1).map((point, index) => ({ from: trail[index], to: point, opacity: 1 - point.age }));
+  const segments = trail
+    .slice(1)
+    .map((point, index) => ({ from: trail[index], to: point, opacity: 1 - point.age }))
+    .filter((segment) => segment.from.segment === segment.to.segment);
 
   return (
     <>
@@ -107,4 +92,3 @@ export function ShuttleTrail({
     </>
   );
 }
-

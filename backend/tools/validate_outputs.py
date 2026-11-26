@@ -4,7 +4,14 @@ Usage: python3 -I backend/tools/validate_outputs.py <output_dir> [--expect-court
 
 Checks: required files exist, JSON parses and carries the expected schema keys, shuttle and
 player coordinates lie inside the source frame, the annotated MP4 is H.264 yuv420p with the
-expected frame count and the moov atom before mdat (faststart). Exits non-zero on failure.
+expected frame count and the moov atom before mdat (faststart).
+
+Observed 2D parity: every Shot timeline row matches exactly one dataset record (shot id, frame,
+timestamp, player, contact status, label, px/s, quality); labels are six-class only; no speed uses
+a frame the observed-2d sanitizer rejected; official speed statistics use confirmed contacts only;
+the dashboard block equals the summary; timestamps equal the video timestamps; Estimated 3D is
+"available" or "rejected" with reasons; Measured 3D is NOT RUN without stereo input.
+Exits non-zero on failure.
 """
 
 from __future__ import annotations
@@ -29,7 +36,9 @@ REQUIRED = [
     "inference_report.json",
 ]
 SCHEMA = "smashlab.local-ai.results/v1"
-SHOT_SCHEMA = "smashlab.shot-trajectory/v1"
+SHOT_SCHEMA = "smashlab.shot-trajectory/v2"
+RULE_VERSION = "trajectory-rules/v2"
+FORBIDDEN_LABELS = {"serve", "push", "defensive_block", "unknown"}
 SHOT_CLASSES = {"smash", "clear", "drop", "drive", "net_shot", "lift"}
 SHOT_TIERS = {"full_trajectory", "partial_trajectory", "contact_fallback"}
 SHOT_QUALITIES = {"high", "medium", "low"}
@@ -151,7 +160,7 @@ def main() -> int:
         problems.append(f"trajectory dataset has {len(shot_records)} rows for {len(timeline)} timeline entries")
     if shot_summary.get("records") != len(shot_records):
         problems.append("trajectory summary record count differs from JSONL")
-    if shot_summary.get("schema") != SHOT_SCHEMA or shot_summary.get("rule_version") != "trajectory-rules/v1":
+    if shot_summary.get("schema") != SHOT_SCHEMA or shot_summary.get("rule_version") != RULE_VERSION:
         problems.append("trajectory summary schema or rule version is wrong")
     if shot_records_api.get("job_id") != shot_summary.get("job_id") or shot_records_api.get("records") != shot_records:
         problems.append("trajectory records API differs from the exported JSONL")
@@ -186,6 +195,66 @@ def main() -> int:
             problems.append(f"{prefix} timestamp does not match its frame")
         if "km/h" in json.dumps(record, ensure_ascii=False):
             problems.append(f"{prefix} incorrectly contains a physical shuttle speed")
+        for key in ("scores", "top3", "evidence_tier", "evidence_quality", "review_status", "review_reasons", "missing_features",
+                    "rule_version", "contact_status", "detected_ratio", "interpolated_ratio", "image_speed", "observed_2d_version"):
+            if key not in record:
+                problems.append(f"{prefix} is missing {key}")
+
+    # Observed 2D parity between the Shot timeline, the dataset and the dashboard block.
+    times = {int(item["frame"]): float(item["time_s"]) for item in shuttle["frames"] if item.get("time_s") is not None}
+    rejected_frames = {int(row[0]) for row in (match.get("observed_2d") or {}).get("rejected_points", [])}
+    for shot, record in zip(timeline, shot_records):
+        where = f"timeline row {shot.get('id')} (frame {shot.get('frame')})"
+        pairs = {
+            "shot id": (record.get("shot_id"), shot.get("shot_id")),
+            "timeline id": (record.get("timeline_id"), shot.get("id")),
+            "frame": (record.get("frame"), shot.get("frame")),
+            "player": (record.get("player"), shot.get("player")),
+            "contact status": (record.get("contact_status"), shot.get("contact_status")),
+            "label": (record.get("label"), shot.get("type")),
+            "px/s": ((record.get("image_speed") or {}).get("px_per_s"), (shot.get("speed") or {}).get("px_per_s")),
+            "quality": (record.get("evidence_quality"), (shot.get("trajectory") or {}).get("evidence_quality")),
+        }
+        for name, (left, right) in pairs.items():
+            if left != right:
+                problems.append(f"{where}: {name} differs between dataset ({left!r}) and timeline ({right!r})")
+        if abs(float(record.get("timestamp_s", -1)) - float(shot.get("time_s", -2))) > 1e-6:
+            problems.append(f"{where}: timestamp differs between dataset and timeline")
+        frame_value = int(record.get("frame", -1))
+        if frame_value in times and abs(float(record.get("timestamp_s", -1)) - times[frame_value]) > 0.0015:
+            problems.append(f"{where}: timestamp does not match the video timestamp of the frame")
+        if not 0 <= frame_value < int(results["video"]["frames_analysed"]):
+            problems.append(f"{where}: frame outside the analysed video")
+        if shot.get("type") not in SHOT_CLASSES or shot.get("type") in FORBIDDEN_LABELS:
+            problems.append(f"{where}: timeline label {shot.get('type')!r} is not one of the six classes")
+        used = set((record.get("image_speed") or {}).get("frames") or [])
+        if used & rejected_frames:
+            problems.append(f"{where}: px/s uses frames the sanitizer rejected {sorted(used & rejected_frames)}")
+        estimated = shot.get("estimated_3d") or {}
+        if estimated.get("status") not in ("available", "rejected"):
+            problems.append(f"{where}: Estimated 3D status {estimated.get('status')!r} is neither available nor rejected")
+        if estimated.get("status") == "rejected" and (not estimated.get("rejection_reasons") or estimated.get("speed_candidate_kmh") is not None):
+            problems.append(f"{where}: a rejected Estimated 3D result must give reasons and no speed")
+        if (shot.get("measured_3d") or {}).get("status") != "not_run":
+            problems.append(f"{where}: Measured 3D must be NOT RUN without stereo input")
+    confirmed = [shot["speed"]["px_per_s"] for shot in timeline
+                 if shot.get("contact_status") == "confirmed" and (shot.get("speed") or {}).get("px_per_s") is not None]
+    official = ((match.get("summary") or {}).get("speed") or {}).get("official") or {}
+    if official.get("count") != len(confirmed) or official.get("max_px_per_s") != (max(confirmed) if confirmed else None):
+        problems.append("official speed summary does not equal the confirmed timeline rows")
+    panel = (match.get("dashboard") or {}).get("speed_panel") or {}
+    if panel.get("official_count") != official.get("count") or panel.get("official_max_px_per_s") != official.get("max_px_per_s"):
+        problems.append("dashboard speed panel differs from the backend speed summary")
+    for identity, row in ((match.get("dashboard") or {}).get("players") or {}).items():
+        own = [shot["speed"]["px_per_s"] for shot in timeline if shot.get("player") == identity
+               and shot.get("contact_status") == "confirmed" and (shot.get("speed") or {}).get("px_per_s") is not None]
+        if row.get("official_max_px_per_s") != (max(own) if own else None):
+            problems.append(f"dashboard {identity} official max differs from its confirmed timeline rows")
+        estimate = row.get("most_frequent_estimate")
+        if estimate is not None and estimate.get("label_kind") != "trajectory_estimate_unverified":
+            problems.append(f"dashboard {identity} most frequent shot is not labelled as an unverified estimate")
+    if ((match.get("measured_3d") or {}).get("status")) != "not_run":
+        problems.append("Measured 3D must be NOT RUN without stereo input")
 
     if expect_court:
         if results["court"].get("status") != "calibrated":
@@ -225,6 +294,13 @@ def main() -> int:
             "rule_version": shot_summary.get("rule_version"),
             "labels": shot_summary.get("label_distribution"),
             "review_status": shot_summary.get("review_status"),
+            "image_speed_px_s": shot_summary.get("image_speed_px_s"),
+            "official_speed": shot_summary.get("official_speed"),
+            "estimated_3d": shot_summary.get("estimated_3d"),
+            "measured_3d": (shot_summary.get("measured_3d") or {}).get("status"),
+            "observed_2d": {key: (shot_summary.get("observed_2d") or {}).get(key)
+                            for key in ("detected", "interpolated", "rejected", "invalid_steps", "timestamp_source")},
+            "derived_stage_seconds": shot_summary.get("derived_stage_seconds"),
         },
     }
     print(json.dumps(summary, indent=2))

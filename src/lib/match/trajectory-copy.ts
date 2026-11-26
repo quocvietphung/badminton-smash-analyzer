@@ -66,6 +66,14 @@ export type TrajectoryCopy = {
   trailNote: string;
   trailOff: string;
   build: string;
+  imageSpeed: string;
+  basisConfirmed: string;
+  basisCandidate: string;
+  ratios: string;
+  removed: string;
+  removedNone: string;
+  observedVersion: string;
+  rejectedLegend: string;
 };
 
 export const TRAJECTORY_COPY: Record<StudioLanguage, TrajectoryCopy> = {
@@ -134,6 +142,14 @@ export const TRAJECTORY_COPY: Record<StudioLanguage, TrajectoryCopy> = {
     trailNote: "TrackNet detections in image pixels. Not a flight measurement.",
     trailOff: "Trail off",
     build: "Build trajectory dataset",
+    imageSpeed: "Image-space speed (±3 frames)",
+    basisConfirmed: "confirmed contact",
+    basisCandidate: "candidate, not official",
+    ratios: "TrackNet / InpaintNet share of the window",
+    removed: "Removed by the observed-2D check",
+    removedNone: "none",
+    observedVersion: "Sanitizer version",
+    rejectedLegend: "removed",
   },
   vi: {
     badge: "Ước lượng từ quỹ đạo · chưa kiểm chứng",
@@ -200,6 +216,14 @@ export const TRAJECTORY_COPY: Record<StudioLanguage, TrajectoryCopy> = {
     trailNote: "Điểm TrackNet tính bằng pixel trên ảnh. Không phải phép đo đường bay.",
     trailOff: "Tắt vệt",
     build: "Tạo dataset quỹ đạo",
+    imageSpeed: "Tốc độ trên ảnh (±3 khung)",
+    basisConfirmed: "chạm đã xác nhận",
+    basisCandidate: "ứng viên, không chính thức",
+    ratios: "Tỉ lệ TrackNet / InpaintNet trong cửa sổ",
+    removed: "Bị bộ kiểm tra observed-2D loại",
+    removedNone: "không có",
+    observedVersion: "Phiên bản bộ lọc",
+    rejectedLegend: "bị loại",
   },
   de: {
     badge: "Flugbahn-Schätzung · nicht verifiziert",
@@ -266,5 +290,13 @@ export const TRAJECTORY_COPY: Record<StudioLanguage, TrajectoryCopy> = {
     trailNote: "TrackNet-Erkennungen in Bildpixeln. Keine Flugmessung.",
     trailOff: "Spur aus",
     build: "Flugbahn-Datensatz erstellen",
+    imageSpeed: "Bildgeschwindigkeit (±3 Bilder)",
+    basisConfirmed: "bestätigter Kontakt",
+    basisCandidate: "Kandidat, nicht offiziell",
+    ratios: "Anteil TrackNet / InpaintNet im Fenster",
+    removed: "Von der Observed-2D-Prüfung entfernt",
+    removedNone: "keine",
+    observedVersion: "Version der Bereinigung",
+    rejectedLegend: "entfernt",
   },
 };

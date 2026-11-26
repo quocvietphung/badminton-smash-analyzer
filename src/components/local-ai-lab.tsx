@@ -28,7 +28,6 @@ import {
   LocalAiApiError,
   readStoredJobId,
   LOCAL_AI_PROXY_BASE,
-  trajectorySegments,
   visibleRatio,
   writeStoredJobId,
   type LocalAiHealth,
@@ -38,9 +37,11 @@ import {
 } from "@/lib/local-ai/client";
 import { publishAnalysisSnapshot } from "@/lib/analysis-session-store";
 import { buildVideoAnalysisSnapshot, type VideoAnalysisResults } from "@/lib/video-analysis";
+import { crossPath, observedPathRuns } from "@/lib/match/observed-path";
 import type { MatchDocument } from "@/lib/match/types";
 import { EvidenceViewer } from "./evidence-viewer";
 import { MatchDashboard } from "./match-dashboard";
+import BroadcastDashboard from "./broadcast-dashboard";
 import { ModelPanel } from "./model-panel";
 import { StatisticsPanel } from "./statistics-panel";
 import { measuredRemainingSeconds } from "@/lib/local-ai/estimate";
@@ -180,6 +181,7 @@ const COPY = {
     groupModels: "AI models that ran",
     groupStats: "Measured statistics and exports",
     groupTechnical: "Technical details: court, players, heatmaps, trajectory, measurements",
+    groupDetails: "Details: timeline, evidence, corrections, models and statistics",
     video: "Annotated video",
     videoNote: "Boxes are person detections; the shuttle marker is a detection in image coordinates.",
     court: "Court calibration",
@@ -189,15 +191,28 @@ const COPY = {
     heatmap: "Player occupancy (image space)",
     heatmapNote: "Share of confirmed foot points per cell. Not a tactical claim.",
     courtHeatmap: "Occupancy on the court plane",
-    shuttle: "Shuttle trajectory (detections in image coordinates)",
-    shuttleLegend: "Solid: TrackNet detection · Dashed: InpaintNet interpolation",
+    shuttle: "Shuttle path (image position, shared observed-2D track)",
+    shuttleLegend:
+      "Solid: TrackNet detection kept · Dashed: InpaintNet fill · ×: removed by the observed-2D check. Image coordinates, not a flight measurement.",
+    shuttleObservedUnavailable: "The shared observed-2D track is not available for this analysis, so no path is drawn.",
+    keptGroup: "After the observed-2D check (used by every chart and statistic)",
+    rawGroup: "Raw TrackNet / InpaintNet output (before the check)",
+    keptPoints: "Kept points",
+    removedPoints: "Removed points",
+    removedReasons: {
+      tracker_jump: "tracker jump",
+      low_confidence: "low confidence",
+      outside_frame: "outside the frame",
+      missing_coordinates: "no coordinates",
+    } as Record<string, string>,
+    frameWord: "Frame",
+    implausibleSteps: "Implausible steps (kept, never a speed)",
+    jumpLimit: "Tracker-jump limit",
     shuttleStats: "Shuttle visibility",
     visibleRatio: "Visible frames",
     detectedFrames: "Detected frames",
     interpolatedFrames: "Interpolated frames",
-    runs: "Visible runs",
     meanConfidence: "Mean detection confidence",
-    stepP95: "Image step, 95th percentile (px per frame)",
     players: "Players",
     tracks: "Confirmed tracks",
     maxConcurrent: "Max players per frame",
@@ -284,6 +299,7 @@ const COPY = {
     groupModels: "Mô hình AI đã chạy",
     groupStats: "Thống kê đo được và tệp xuất",
     groupTechnical: "Chi tiết kỹ thuật: sân, người chơi, bản đồ nhiệt, quỹ đạo, số đo",
+    groupDetails: "Chi tiết: timeline, bằng chứng, hiệu chỉnh, mô hình và thống kê",
     video: "Video có chú thích",
     videoNote: "Khung là phát hiện người chơi; điểm cầu là phát hiện trong tọa độ ảnh.",
     court: "Hiệu chỉnh sân",
@@ -293,15 +309,28 @@ const COPY = {
     heatmap: "Mật độ vị trí người chơi (không gian ảnh)",
     heatmapNote: "Tỉ lệ điểm chân được xác nhận trong mỗi ô. Không phải nhận định chiến thuật.",
     courtHeatmap: "Mật độ trên mặt sân",
-    shuttle: "Quỹ đạo cầu (phát hiện trong tọa độ ảnh)",
-    shuttleLegend: "Nét liền: phát hiện TrackNet · Nét đứt: nội suy InpaintNet",
+    shuttle: "Đường đi của cầu (vị trí trong ảnh, track observed-2D dùng chung)",
+    shuttleLegend:
+      "Nét liền: phát hiện TrackNet được giữ · Nét đứt: điểm InpaintNet điền vào · ×: bị bộ kiểm tra observed-2D loại. Tọa độ ảnh, không phải phép đo đường bay.",
+    shuttleObservedUnavailable: "Phân tích này không có track observed-2D dùng chung, nên không vẽ đường đi.",
+    keptGroup: "Sau bộ kiểm tra observed-2D (mọi biểu đồ và thống kê dùng phần này)",
+    rawGroup: "Đầu ra raw của TrackNet / InpaintNet (trước khi kiểm tra)",
+    keptPoints: "Điểm được giữ",
+    removedPoints: "Điểm bị loại",
+    removedReasons: {
+      tracker_jump: "tracker nhảy",
+      low_confidence: "độ tin cậy thấp",
+      outside_frame: "ngoài khung hình",
+      missing_coordinates: "không có tọa độ",
+    } as Record<string, string>,
+    frameWord: "Khung",
+    implausibleSteps: "Bước bất thường (vẫn giữ, không bao giờ tính tốc độ)",
+    jumpLimit: "Ngưỡng tracker nhảy",
     shuttleStats: "Độ hiển thị của cầu",
     visibleRatio: "Khung có cầu",
     detectedFrames: "Khung phát hiện",
     interpolatedFrames: "Khung nội suy",
-    runs: "Đoạn hiển thị",
     meanConfidence: "Độ tin cậy phát hiện trung bình",
-    stepP95: "Bước di chuyển ảnh, phân vị 95 (px mỗi khung)",
     players: "Người chơi",
     tracks: "Quỹ đạo đã xác nhận",
     maxConcurrent: "Số người tối đa mỗi khung",
@@ -388,6 +417,7 @@ const COPY = {
     groupModels: "KI-Modelle, die gelaufen sind",
     groupStats: "Gemessene Statistik und Exporte",
     groupTechnical: "Technische Details: Feld, Spieler, Wärmekarten, Flugbahn, Messwerte",
+    groupDetails: "Details: Zeitleiste, Belege, Korrekturen, Modelle und Statistik",
     video: "Annotiertes Video",
     videoNote: "Rahmen sind Personenerkennungen; der Federball-Marker ist eine Erkennung in Bildkoordinaten.",
     court: "Feldkalibrierung",
@@ -397,15 +427,28 @@ const COPY = {
     heatmap: "Spieler-Aufenthalt (Bildraum)",
     heatmapNote: "Anteil bestätigter Fußpunkte je Zelle. Keine taktische Aussage.",
     courtHeatmap: "Aufenthalt auf der Feldebene",
-    shuttle: "Federball-Flugbahn (Erkennungen in Bildkoordinaten)",
-    shuttleLegend: "Durchgezogen: TrackNet-Erkennung · Gestrichelt: InpaintNet-Interpolation",
+    shuttle: "Federballweg (Bildposition, gemeinsame Observed-2D-Spur)",
+    shuttleLegend:
+      "Durchgezogen: behaltene TrackNet-Erkennung · Gestrichelt: InpaintNet-Füllung · ×: von der Observed-2D-Prüfung entfernt. Bildkoordinaten, keine Flugmessung.",
+    shuttleObservedUnavailable: "Für diese Analyse gibt es keine gemeinsame Observed-2D-Spur, daher wird kein Weg gezeichnet.",
+    keptGroup: "Nach der Observed-2D-Prüfung (Grundlage aller Diagramme und Statistiken)",
+    rawGroup: "Rohausgabe von TrackNet / InpaintNet (vor der Prüfung)",
+    keptPoints: "Behaltene Punkte",
+    removedPoints: "Entfernte Punkte",
+    removedReasons: {
+      tracker_jump: "Tracker-Sprung",
+      low_confidence: "geringe Sicherheit",
+      outside_frame: "außerhalb des Bildes",
+      missing_coordinates: "keine Koordinaten",
+    } as Record<string, string>,
+    frameWord: "Bild",
+    implausibleSteps: "Unplausible Schritte (behalten, nie eine Geschwindigkeit)",
+    jumpLimit: "Grenze für Tracker-Sprünge",
     shuttleStats: "Sichtbarkeit des Federballs",
     visibleRatio: "Sichtbare Bilder",
     detectedFrames: "Erkannte Bilder",
     interpolatedFrames: "Interpolierte Bilder",
-    runs: "Sichtbare Abschnitte",
     meanConfidence: "Mittlere Erkennungssicherheit",
-    stepP95: "Bildschritt, 95. Perzentil (px pro Bild)",
     players: "Spieler",
     tracks: "Bestätigte Tracks",
     maxConcurrent: "Max. Personen pro Bild",
@@ -714,7 +757,9 @@ export default function LocalAiLab({
     job && !isTerminalStatus(job.status) && elapsedSeconds !== null
       ? measuredRemainingSeconds(job.progress, elapsedSeconds)
       : null;
-  const segments = useMemo(() => (shuttle ? trajectorySegments(shuttle.frames) : []), [shuttle]);
+  // The chart draws the backend's shared observed-2D track (the same points every statistic uses), never the raw file.
+  const observed = match?.observed_2d ?? null;
+  const observedRuns = useMemo(() => observedPathRuns(observed), [observed]);
   const cells = useMemo(() => (results ? heatmapCells(results.movement.heatmap.normalised) : []), [results]);
   const courtCells = useMemo(
     () => (results?.movement.court_plane?.heatmap ? heatmapCells(results.movement.court_plane.heatmap.normalised) : []),
@@ -886,6 +931,10 @@ export default function LocalAiLab({
         <section className={styles.results} aria-labelledby="local-ai-results-title">
           <div className={styles.resultsHeader}>
             <h3 id="local-ai-results-title">{copy.resultsTitle}</h3>
+            <span className={styles.resultsMeta}>
+              {job.source.name}
+              {resultIsCached ? ` · ${WORKFLOW_COPY[language].cachedLabel}` : ""}
+            </span>
             {onOpenCoach ? (
               <button type="button" className={styles.ghostButton} onClick={onOpenCoach}>
                 <MessageCircleMore aria-hidden="true" />
@@ -894,290 +943,352 @@ export default function LocalAiLab({
             ) : null}
           </div>
 
-          <MatchDashboard apiBase={apiBase} jobId={job.job_id} language={language} revision={evidenceRevision} />
+          <BroadcastDashboard
+            apiBase={apiBase}
+            jobId={job.job_id}
+            language={language}
+            revision={evidenceRevision}
+            courtCalibrated={results.court.status === "calibrated"}
+            heatmap={results.movement.heatmap.normalised}
+            courtHeatmap={results.movement.court_plane?.heatmap?.normalised ?? null}
+            sourceName={job.source.name}
+            durationS={results.video.duration_s}
+            width={results.video.width}
+            height={results.video.height}
+            fps={results.video.fps}
+          />
 
-          <Group title={copy.groupEvidence}>
-            <EvidenceViewer
-              apiBase={apiBase}
-              jobId={job.job_id}
-              language={language}
-              meta={{
-                sourceName: job.source.name,
-                width: results.video.width,
-                height: results.video.height,
-                fps: results.video.fps,
-                frames: results.video.frames_analysed,
-                mode: results.players.mode ?? "singles",
-                logicalIdentities: results.players.logical_identities ?? 2,
-                courtStatus: results.court.status,
-              }}
-              revision={evidenceRevision}
-              onChanged={() => setEvidenceRevision((value) => value + 1)}
-            />
-          </Group>
-          <Group title={copy.groupModels}>
-            <ModelPanel apiBase={apiBase} jobId={job.job_id} language={language} revision={evidenceRevision} />
-          </Group>
-          <Group title={copy.groupStats}>
-            <StatisticsPanel
-              apiBase={apiBase}
-              jobId={job.job_id}
-              language={language}
-              results={results}
-              metrics={metrics}
-              revision={evidenceRevision}
-              shotCount={match ? match.shots.items.length : null}
-            />
-          </Group>
-
-          <Group title={copy.groupTechnical}>
-            <div className={styles.grid}>
-              <article className={styles.card}>
-                <header className={styles.cardHeader}>
-                  <strong>{copy.court}</strong>
-                </header>
-                {results.court.status === "calibrated" ? (
-                  <p className={styles.good}>
-                    <CheckCircle2 aria-hidden="true" />
-                    {copy.courtOk}
-                  </p>
-                ) : (
-                  <p className={styles.muted}>
-                    <AlertTriangle aria-hidden="true" />
-                    {copy.courtFailed} {results.court.reason}
-                  </p>
-                )}
-                {results.court.status === "calibrated" ? (
-                  <p className={styles.muted}>
-                    {copy.courtScore}: {Number(results.court.score ?? 0).toFixed(2)} · {results.court.template}
-                  </p>
-                ) : null}
-              </article>
-
-              <article className={styles.card}>
-                <header className={styles.cardHeader}>
-                  <strong>{copy.players}</strong>
-                </header>
-                <dl className={styles.facts}>
-                  <div>
-                    <dt>{copy.tracks}</dt>
-                    <dd>{results.players.tracks_confirmed}</dd>
-                  </div>
-                  <div>
-                    <dt>{copy.maxConcurrent}</dt>
-                    <dd>{results.players.max_concurrent_confirmed}</dd>
-                  </div>
-                  <div>
-                    <dt>{copy.detectionScore}</dt>
-                    <dd>{Number(results.players.mean_detection_score).toFixed(2)}</dd>
-                  </div>
-                </dl>
-              </article>
-            </div>
-
-            <div className={styles.grid}>
-              <article className={styles.card}>
-                <header className={styles.cardHeader}>
-                  <strong>{copy.heatmap}</strong>
-                </header>
-                <div className={styles.heatmap} role="img" aria-label={copy.heatmap}>
-                  {Array.from({ length: results.movement.heatmap.normalised.length * (results.movement.heatmap.normalised[0]?.length ?? 0) }).map((_, index) => {
-                    const cols = results.movement.heatmap.normalised[0]?.length ?? 1;
-                    const row = Math.floor(index / cols);
-                    const col = index % cols;
-                    const cell = cells.find((item) => item.row === row && item.col === col);
-                    return (
-                      <span
-                        key={index}
-                        className={styles.heatCell}
-                        style={{ background: cell ? `rgba(101, 244, 200, ${0.12 + 0.88 * cell.intensity})` : "transparent" }}
-                      />
-                    );
-                  })}
-                </div>
-                <p className={styles.muted}>{copy.heatmapNote}</p>
-              </article>
-
-              {results.movement.court_plane?.heatmap ? (
-                <article className={styles.card}>
-                  <header className={styles.cardHeader}>
-                    <strong>{copy.courtHeatmap}</strong>
-                  </header>
-                  <div className={styles.courtHeatmap} role="img" aria-label={copy.courtHeatmap}>
-                    {Array.from({ length: results.movement.court_plane.heatmap.normalised.length * (results.movement.court_plane.heatmap.normalised[0]?.length ?? 0) }).map((_, index) => {
-                      const cols = results.movement.court_plane?.heatmap?.normalised[0]?.length ?? 1;
-                      const row = Math.floor(index / cols);
-                      const col = index % cols;
-                      const cell = courtCells.find((item) => item.row === row && item.col === col);
-                      return (
-                        <span
-                          key={index}
-                          className={styles.heatCell}
-                          style={{ background: cell ? `rgba(101, 244, 200, ${0.12 + 0.88 * cell.intensity})` : "transparent" }}
-                        />
-                      );
-                    })}
-                  </div>
-                </article>
-              ) : null}
-            </div>
-
-            {shuttle ? (
-              <article className={styles.card}>
-                <header className={styles.cardHeader}>
-                  <strong>{copy.shuttle}</strong>
-                </header>
-                <svg
-                  className={styles.trajectory}
-                  viewBox={`0 0 ${shuttle.source_width} ${shuttle.source_height}`}
-                  role="img"
-                  aria-label={copy.shuttle}
-                >
-                  <rect x={0} y={0} width={shuttle.source_width} height={shuttle.source_height} className={styles.frameRect} />
-                  {segments.map((segment, index) => (
-                    <polyline
-                      key={index}
-                      points={segment.points.map((point) => `${point.x},${point.y}`).join(" ")}
-                      className={segment.refined ? styles.trailRefined : styles.trail}
-                      vectorEffect="non-scaling-stroke"
+          <Group title={copy.groupDetails}>
+            <div className={styles.detailStack}>
+              <MatchDashboard apiBase={apiBase} jobId={job.job_id} language={language} revision={evidenceRevision} />
+              <Group title={copy.groupEvidence}>
+                    <EvidenceViewer
+                          apiBase={apiBase}
+                          jobId={job.job_id}
+                          language={language}
+                          observed={observed}
+                          meta={{
+                            sourceName: job.source.name,
+                            width: results.video.width,
+                            height: results.video.height,
+                            fps: results.video.fps,
+                            frames: results.video.frames_analysed,
+                            mode: results.players.mode ?? "singles",
+                            logicalIdentities: results.players.logical_identities ?? 2,
+                            courtStatus: results.court.status,
+                          }}
+                          revision={evidenceRevision}
+                          onChanged={() => setEvidenceRevision((value) => value + 1)}
                     />
-                  ))}
-                </svg>
-                <p className={styles.muted}>{copy.shuttleLegend}</p>
-                <dl className={styles.facts}>
-                  <div>
-                    <dt>{copy.visibleRatio}</dt>
-                    <dd>{Math.round(visibleRatio(shuttle.frames) * 100)}%</dd>
-                  </div>
-                  <div>
-                    <dt>{copy.detectedFrames}</dt>
-                    <dd>{results.shuttle.frames_detected}</dd>
-                  </div>
-                  <div>
-                    <dt>{copy.interpolatedFrames}</dt>
-                    <dd>{results.shuttle.frames_interpolated}</dd>
-                  </div>
-                  <div>
-                    <dt>{copy.runs}</dt>
-                    <dd>{results.shuttle.visible_runs}</dd>
-                  </div>
-                  <div>
-                    <dt>{copy.meanConfidence}</dt>
-                    <dd>{Number(results.shuttle.mean_confidence_detected).toFixed(2)}</dd>
-                  </div>
-                  <div>
-                    <dt>{copy.stepP95}</dt>
-                    <dd>{results.shuttle.step_px_per_frame_p95 ?? "–"}</dd>
-                  </div>
-                </dl>
-              </article>
-            ) : null}
+              </Group>
+              <Group title={copy.groupModels}>
+                <ModelPanel apiBase={apiBase} jobId={job.job_id} language={language} revision={evidenceRevision} />
+              </Group>
+              <Group title={copy.groupStats}>
+                <StatisticsPanel
+                  apiBase={apiBase}
+                  jobId={job.job_id}
+                  language={language}
+                  results={results}
+                  metrics={metrics}
+                  revision={evidenceRevision}
+                  shotCount={match ? match.shots.items.length : null}
+                />
+              </Group>
+                  <Group title={copy.groupTechnical}>
+                    <div className={styles.grid}>
+                      <article className={styles.card}>
+                        <header className={styles.cardHeader}>
+                          <strong>{copy.court}</strong>
+                        </header>
+                        {results.court.status === "calibrated" ? (
+                          <p className={styles.good}>
+                            <CheckCircle2 aria-hidden="true" />
+                            {copy.courtOk}
+                          </p>
+                        ) : (
+                          <p className={styles.muted}>
+                            <AlertTriangle aria-hidden="true" />
+                            {copy.courtFailed} {results.court.reason}
+                          </p>
+                        )}
+                        {results.court.status === "calibrated" ? (
+                          <p className={styles.muted}>
+                            {copy.courtScore}: {Number(results.court.score ?? 0).toFixed(2)} · {results.court.template}
+                          </p>
+                        ) : null}
+                      </article>
 
-            <article className={styles.card}>
-              <header className={styles.cardHeader}>
-                <strong>{copy.movementTable}</strong>
-              </header>
-              <div className={styles.tableWrap}>
-                <table className={styles.table}>
-                  <thead>
-                    <tr>
-                      <th>{copy.track}</th>
-                      <th>{copy.frames}</th>
-                      <th>{copy.coverage}</th>
-                      <th>{copy.segments}</th>
-                      <th>{copy.pathNorm}</th>
-                      <th>{copy.speedNorm}</th>
-                      {results.movement.court_plane ? <th>{copy.pathM}</th> : null}
-                      {results.movement.court_plane ? <th>{copy.speedM}</th> : null}
-                      {results.movement.court_plane ? <th>{copy.inside}</th> : null}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {results.movement.per_player.map((row) => {
-                      const court = results.movement.court_plane?.per_player.find((item) => item.track_id === row.track_id);
-                      return (
-                        <tr key={row.track_id}>
-                          <td>P{row.track_id}</td>
-                          <td>{row.observed_frames}</td>
-                          <td>{Math.round(row.coverage_ratio * 100)}%</td>
-                          <td>{row.segments}</td>
-                          <td>{row.path_length_norm.toFixed(3)}</td>
-                          <td>{row.avg_speed_norm_per_s.toFixed(3)}</td>
-                          {results.movement.court_plane ? <td>{court ? court.path_length_m.toFixed(1) : "–"}</td> : null}
-                          {results.movement.court_plane ? <td>{court ? court.avg_speed_m_per_s.toFixed(2) : "–"}</td> : null}
-                          {results.movement.court_plane ? (
-                            <td>{court ? `${Math.round(court.share_inside_doubles_outline * 100)}%` : "–"}</td>
-                          ) : null}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <p className={styles.muted}>{results.movement.units}</p>
-            </article>
+                      <article className={styles.card}>
+                        <header className={styles.cardHeader}>
+                          <strong>{copy.players}</strong>
+                        </header>
+                        <dl className={styles.facts}>
+                          <div>
+                            <dt>{copy.tracks}</dt>
+                            <dd>{results.players.tracks_confirmed}</dd>
+                          </div>
+                          <div>
+                            <dt>{copy.maxConcurrent}</dt>
+                            <dd>{results.players.max_concurrent_confirmed}</dd>
+                          </div>
+                          <div>
+                            <dt>{copy.detectionScore}</dt>
+                            <dd>{Number(results.players.mean_detection_score).toFixed(2)}</dd>
+                          </div>
+                        </dl>
+                      </article>
+                    </div>
 
-            {metrics ? (
-              <article className={styles.card}>
-                <header className={styles.cardHeader}>
-                  <strong>{copy.metrics}</strong>
-                </header>
-                <dl className={styles.facts}>
-                  <div>
-                    <dt>{copy.wall}</dt>
-                    <dd>{formatSeconds(metrics.wall_seconds)}</dd>
-                  </div>
-                  <div>
-                    <dt>{copy.fps}</dt>
-                    <dd>{metrics.frames_per_second ?? "–"}</dd>
-                  </div>
-                  <div>
-                    <dt>{copy.cpu}</dt>
-                    <dd>{formatSeconds(metrics.cpu_seconds)}</dd>
-                  </div>
-                  <div>
-                    <dt>{copy.rss}</dt>
-                    <dd>{metrics.peak_rss_mb}</dd>
-                  </div>
-                  <div>
-                    <dt>{copy.detectorMs}</dt>
-                    <dd>{metrics.detector_ms_per_frame ?? "–"}</dd>
-                  </div>
-                </dl>
-              </article>
-            ) : null}
+                    <div className={styles.grid}>
+                      <article className={styles.card}>
+                        <header className={styles.cardHeader}>
+                          <strong>{copy.heatmap}</strong>
+                        </header>
+                        <div className={styles.heatmap} role="img" aria-label={copy.heatmap}>
+                          {Array.from({ length: results.movement.heatmap.normalised.length * (results.movement.heatmap.normalised[0]?.length ?? 0) }).map((_, index) => {
+                            const cols = results.movement.heatmap.normalised[0]?.length ?? 1;
+                            const row = Math.floor(index / cols);
+                            const col = index % cols;
+                            const cell = cells.find((item) => item.row === row && item.col === col);
+                            return (
+                              <span
+                                key={index}
+                                className={styles.heatCell}
+                                style={{ background: cell ? `rgba(101, 244, 200, ${0.12 + 0.88 * cell.intensity})` : "transparent" }}
+                              />
+                            );
+                          })}
+                        </div>
+                        <p className={styles.muted}>{copy.heatmapNote}</p>
+                      </article>
 
-            {report ? (
-              <article className={styles.card}>
-                <header className={styles.cardHeader}>
-                  <strong>{copy.inference}</strong>
-                </header>
-                <ul className={styles.modelList}>
-                  {report.models.map((model) => (
-                    <li key={model.name}>
-                      <strong>{model.name}</strong> — {model.task} · {copy.licence}: {model.licence}
-                    </li>
-                  ))}
-                </ul>
-                <p className={styles.muted}>
-                  ONNX Runtime {report.runtime.onnxruntime} · OpenCV {report.runtime.opencv} · NumPy {report.runtime.numpy}
-                </p>
-              </article>
-            ) : null}
+                      {results.movement.court_plane?.heatmap ? (
+                        <article className={styles.card}>
+                          <header className={styles.cardHeader}>
+                            <strong>{copy.courtHeatmap}</strong>
+                          </header>
+                          <div className={styles.courtHeatmap} role="img" aria-label={copy.courtHeatmap}>
+                            {Array.from({ length: results.movement.court_plane.heatmap.normalised.length * (results.movement.court_plane.heatmap.normalised[0]?.length ?? 0) }).map((_, index) => {
+                              const cols = results.movement.court_plane?.heatmap?.normalised[0]?.length ?? 1;
+                              const row = Math.floor(index / cols);
+                              const col = index % cols;
+                              const cell = courtCells.find((item) => item.row === row && item.col === col);
+                              return (
+                                <span
+                                  key={index}
+                                  className={styles.heatCell}
+                                  style={{ background: cell ? `rgba(101, 244, 200, ${0.12 + 0.88 * cell.intensity})` : "transparent" }}
+                                />
+                              );
+                            })}
+                          </div>
+                        </article>
+                      ) : null}
+                    </div>
 
-            <article className={styles.card}>
-              <header className={styles.cardHeader}>
-                <strong>{copy.limitations}</strong>
-              </header>
-              <ul className={styles.modelList}>
-                {results.limitations.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-              <p className={styles.muted}>
-                {copy.downloads}: {LOCAL_AI_ARTIFACT_NAMES.filter((name) => name !== "court_coordinates.json").join(", ")}
-              </p>
-            </article>
+                    {shuttle ? (
+                      <article className={styles.card}>
+                        <header className={styles.cardHeader}>
+                          <strong>{copy.shuttle}</strong>
+                        </header>
+                        {observed ? (
+                          <svg
+                            className={styles.trajectory}
+                            viewBox={`0 0 ${observed.frame_size[0]} ${observed.frame_size[1]}`}
+                            role="img"
+                            aria-label={copy.shuttle}
+                          >
+                            <rect x={0} y={0} width={observed.frame_size[0]} height={observed.frame_size[1]} className={styles.frameRect} />
+                            {observedRuns.map((run, index) => (
+                              <polyline
+                                key={index}
+                                points={run.points.map((point) => `${point[0]},${point[1]}`).join(" ")}
+                                className={run.interpolated ? styles.trailRefined : styles.trail}
+                                vectorEffect="non-scaling-stroke"
+                              />
+                            ))}
+                            {observed.rejected_points.map(([frame, x, y, reason]) =>
+                              x === null || y === null ? null : (
+                                <path
+                                  key={frame}
+                                  d={crossPath(x, y, Math.hypot(...observed.frame_size) / 160)}
+                                  className={styles.trailRemoved}
+                                  vectorEffect="non-scaling-stroke"
+                                >
+                                  <title>{`${copy.frameWord} ${frame}: ${copy.removedReasons[reason] ?? reason}`}</title>
+                                </path>
+                              ),
+                            )}
+                          </svg>
+                        ) : (
+                          <p className={styles.muted}>{copy.shuttleObservedUnavailable}</p>
+                        )}
+                        <p className={styles.muted}>{copy.shuttleLegend}</p>
+                        {observed ? (
+                          <>
+                            <p className={styles.factGroup}>{copy.keptGroup}</p>
+                            <dl className={styles.facts}>
+                              <div>
+                                <dt>{copy.keptPoints}</dt>
+                                <dd>{`${observed.detected} TrackNet · ${observed.interpolated} InpaintNet`}</dd>
+                              </div>
+                              <div>
+                                <dt>{copy.removedPoints}</dt>
+                                <dd>
+                                  {observed.rejected_total}
+                                  {observed.rejected_total > 0
+                                    ? ` (${Object.entries(observed.rejected)
+                                        .filter(([, count]) => count > 0)
+                                        .map(([reason, count]) => `${copy.removedReasons[reason] ?? reason} ${count}`)
+                                        .join(", ")})`
+                                    : ""}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>{copy.segments}</dt>
+                                <dd>{observed.segments}</dd>
+                              </div>
+                              <div>
+                                <dt>{copy.implausibleSteps}</dt>
+                                <dd>{observed.invalid_steps}</dd>
+                              </div>
+                              <div>
+                                <dt>{copy.jumpLimit}</dt>
+                                <dd>{`${Math.round(observed.max_speed_px_s)} px/s`}</dd>
+                              </div>
+                            </dl>
+                          </>
+                        ) : null}
+                        <p className={styles.factGroup}>{copy.rawGroup}</p>
+                        <dl className={styles.facts}>
+                          <div>
+                            <dt>{copy.visibleRatio}</dt>
+                            <dd>{Math.round(visibleRatio(shuttle.frames) * 100)}%</dd>
+                          </div>
+                          <div>
+                            <dt>{copy.detectedFrames}</dt>
+                            <dd>{results.shuttle.frames_detected}</dd>
+                          </div>
+                          <div>
+                            <dt>{copy.interpolatedFrames}</dt>
+                            <dd>{results.shuttle.frames_interpolated}</dd>
+                          </div>
+                          <div>
+                            <dt>{copy.meanConfidence}</dt>
+                            <dd>{Number(results.shuttle.mean_confidence_detected).toFixed(2)}</dd>
+                          </div>
+                        </dl>
+                      </article>
+                    ) : null}
+
+                    <article className={styles.card}>
+                      <header className={styles.cardHeader}>
+                        <strong>{copy.movementTable}</strong>
+                      </header>
+                      <div className={styles.tableWrap}>
+                        <table className={styles.table}>
+                          <thead>
+                            <tr>
+                              <th>{copy.track}</th>
+                              <th>{copy.frames}</th>
+                              <th>{copy.coverage}</th>
+                              <th>{copy.segments}</th>
+                              <th>{copy.pathNorm}</th>
+                              <th>{copy.speedNorm}</th>
+                              {results.movement.court_plane ? <th>{copy.pathM}</th> : null}
+                              {results.movement.court_plane ? <th>{copy.speedM}</th> : null}
+                              {results.movement.court_plane ? <th>{copy.inside}</th> : null}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {results.movement.per_player.map((row) => {
+                              const court = results.movement.court_plane?.per_player.find((item) => item.track_id === row.track_id);
+                              return (
+                                <tr key={row.track_id}>
+                                  <td>P{row.track_id}</td>
+                                  <td>{row.observed_frames}</td>
+                                  <td>{Math.round(row.coverage_ratio * 100)}%</td>
+                                  <td>{row.segments}</td>
+                                  <td>{row.path_length_norm.toFixed(3)}</td>
+                                  <td>{row.avg_speed_norm_per_s.toFixed(3)}</td>
+                                  {results.movement.court_plane ? <td>{court ? court.path_length_m.toFixed(1) : "–"}</td> : null}
+                                  {results.movement.court_plane ? <td>{court ? court.avg_speed_m_per_s.toFixed(2) : "–"}</td> : null}
+                                  {results.movement.court_plane ? (
+                                    <td>{court ? `${Math.round(court.share_inside_doubles_outline * 100)}%` : "–"}</td>
+                                  ) : null}
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <p className={styles.muted}>{results.movement.units}</p>
+                    </article>
+
+                    {metrics ? (
+                      <article className={styles.card}>
+                        <header className={styles.cardHeader}>
+                          <strong>{copy.metrics}</strong>
+                        </header>
+                        <dl className={styles.facts}>
+                          <div>
+                            <dt>{copy.wall}</dt>
+                            <dd>{formatSeconds(metrics.wall_seconds)}</dd>
+                          </div>
+                          <div>
+                            <dt>{copy.fps}</dt>
+                            <dd>{metrics.frames_per_second ?? "–"}</dd>
+                          </div>
+                          <div>
+                            <dt>{copy.cpu}</dt>
+                            <dd>{formatSeconds(metrics.cpu_seconds)}</dd>
+                          </div>
+                          <div>
+                            <dt>{copy.rss}</dt>
+                            <dd>{metrics.peak_rss_mb}</dd>
+                          </div>
+                          <div>
+                            <dt>{copy.detectorMs}</dt>
+                            <dd>{metrics.detector_ms_per_frame ?? "–"}</dd>
+                          </div>
+                        </dl>
+                      </article>
+                    ) : null}
+
+                    {report ? (
+                      <article className={styles.card}>
+                        <header className={styles.cardHeader}>
+                          <strong>{copy.inference}</strong>
+                        </header>
+                        <ul className={styles.modelList}>
+                          {report.models.map((model) => (
+                            <li key={model.name}>
+                              <strong>{model.name}</strong> — {model.task} · {copy.licence}: {model.licence}
+                            </li>
+                          ))}
+                        </ul>
+                        <p className={styles.muted}>
+                          ONNX Runtime {report.runtime.onnxruntime} · OpenCV {report.runtime.opencv} · NumPy {report.runtime.numpy}
+                        </p>
+                      </article>
+                    ) : null}
+
+                    <article className={styles.card}>
+                      <header className={styles.cardHeader}>
+                        <strong>{copy.limitations}</strong>
+                      </header>
+                      <ul className={styles.modelList}>
+                        {results.limitations.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                      <p className={styles.muted}>
+                        {copy.downloads}: {LOCAL_AI_ARTIFACT_NAMES.filter((name) => name !== "court_coordinates.json").join(", ")}
+                      </p>
+                    </article>
+                  </Group>
+            </div>
           </Group>
         </section>
       ) : null}

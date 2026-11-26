@@ -6,12 +6,11 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
+from app.analytics import observed2d as O
 from app.analytics.match import (
     ContactParams,
     assess_speed,
     build_match_document,
-    detected_image_points,
-    shot_motion,
     contact_candidates,
     detect_contacts,
     identities_for,
@@ -167,19 +166,19 @@ H_100PX_PER_M = [[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 1.0]]
 
 
 def test_shuttle_motion_is_image_space_only_and_refused_without_enough_points():
-    image = detected_image_points(linear_shuttle(12))
-    result = shot_motion(5, image, FPS)
+    track = O.sanitize({"frames": linear_shuttle(12)}, width=640, height=360, fps=FPS)
+    result = O.image_speed_around(track, 5)
     assert result["px_per_s"] == pytest.approx(900.0, abs=0.05)
-    assert result["kmh"] is None and result["kind"] == "image_space" and result["points"] == 7
+    assert result["kmh"] is None and result["kind"] == "image_space" and result["points"] == 7 and result["unit"] == "px/s"
     assert result["physical_speed_available"] is False
-    assert shot_motion(5, {}, FPS)["px_per_s"] is None
-    assert "Only 0" in shot_motion(5, {}, FPS)["reason"]
+    empty = O.image_speed_around(O.sanitize({"frames": []}, width=640, height=360, fps=FPS), 5)
+    assert empty["px_per_s"] is None and "Only 0" in empty["reason"]
 
 
 def test_refined_points_alone_give_no_motion_measurement():
-    image = detected_image_points(linear_shuttle(12, refined=True))
-    assert image == {}
-    assert shot_motion(5, image, FPS)["px_per_s"] is None
+    track = O.sanitize({"frames": linear_shuttle(12, refined=True)}, width=640, height=360, fps=FPS)
+    assert track.points and all(point.interpolated for point in track.points.values())
+    assert O.image_speed_around(track, 5)["px_per_s"] is None
 
 
 def test_headline_motion_is_measured_only_for_confirmed_contacts():
@@ -369,9 +368,9 @@ def test_rejected_turns_carry_a_reason_and_merged_turns_name_their_survivor():
 
 
 def test_automatic_candidates_get_unverified_image_motion_and_confirmed_ones_are_labelled_so():
-    # The shuttle travels along the court length (image y), 0.3 m per frame toward the far side.
+    # The shuttle travels down the image inside the 640 x 360 frame, 8 px per frame.
     shuttle_doc = {"frames": [
-        {"frame": f, "time_s": round(f / FPS, 3), "x": 200.0, "y": 300.0 + 30.0 * f, "visible": True, "confidence": 0.9, "refined": False}
+        {"frame": f, "time_s": round(f / FPS, 3), "x": 200.0, "y": 20.0 + 8.0 * f, "visible": True, "confidence": 0.9, "refined": False}
         for f in range(40)
     ]}
     tracks = [player(1, "P1", range(20), (100, 100, 150, 250))]

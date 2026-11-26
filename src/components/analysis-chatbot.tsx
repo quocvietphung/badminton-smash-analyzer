@@ -87,7 +87,7 @@ const CHAT_COPY = {
     court: "Court",
     calibrated: "Calibrated",
     notCalibrated: "Not calibrated",
-    welcomeWithData: (name: string, tracks: number, detections: number) => `I received the analysis of **${name}**: ${tracks} player tracks and ${detections} shuttle detection frames. Shot types come only from the trajectory estimate of this analysis (trajectory-rules/v1), and they are unvalidated. Speeds and contact candidates are not part of this coaching data.`,
+    welcomeWithData: (name: string, tracks: number, detections: number) => `I received the analysis of **${name}**: ${tracks} player tracks and ${detections} shuttle detection frames. Shot types come only from the trajectory estimate of this analysis (trajectory-rules), and they are unverified. Speeds and contact candidates are not part of this coaching data.`,
     welcomeEmpty: "Ask a technique question now. For feedback on a video, upload and analyse it in Video analysis first.",
     readAnalysis: "Current analysis data",
     readAnalysisDetail: "Shuttle detections, player tracks, court calibration, P1/P2 movement and shot timeline (JSON)",

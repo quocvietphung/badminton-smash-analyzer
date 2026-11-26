@@ -1,10 +1,13 @@
-"""Per-shot derived dataset: one trajectory-rules/v1 record for every row of the Shot timeline of one analysis.
+"""Per-shot derived dataset: one trajectory-rules/v2 record for every row of the Shot timeline of one analysis.
 
 Written to outputs/<job-id>/derived/ only. Raw TrackNet output, analysis.json, shots.json, model_execution.json and
 corrections.json are never written here. The dataset can be rebuilt from the raw outputs with the same rule version.
 
 Every record is for this job only: the shuttle trajectory and court calibration are read from this job's folder, and the
 player positions come from this job's match document. Nothing is copied from another analysis or sample.
+
+This file is the Observed 2D tier only: image positions in pixels and image-space speeds in px/s, from the shared
+observed-2d/v1 track. The Estimated 3D and Measured 3D tiers are kept in their own files.
 """
 
 from __future__ import annotations
@@ -13,11 +16,14 @@ import hashlib
 import json
 import os
 from datetime import datetime, timezone
+from statistics import median
 from typing import Iterable, Mapping, Optional
 
+from app.analytics import observed2d as O
 from app.analytics import trajectory_rules as R
+from app.analytics.match import player_foot_at
 
-SCHEMA = "smashlab.shot-trajectory/v1"
+SCHEMA = "smashlab.shot-trajectory/v2"
 DERIVED_DIR = "derived"
 DATASET_FILE = "shot_trajectory_dataset.jsonl"
 SUMMARY_FILE = "shot_trajectory_summary.json"
@@ -27,6 +33,7 @@ FEATURE_ALIASES = {
     "flight_s": "observed_flight_s",
     "curvature_rad": "trajectory_curvature",
 }
+SIX_CLASSES = set(R.CLASSES)
 
 
 def derived_dir(job_dir: str) -> str:
@@ -66,77 +73,78 @@ def player_foot(doc: Mapping, player: Optional[str], frame: int) -> Optional[tup
     if not player or doc.get("court", {}).get("status") != "calibrated":
         return None
     series = (doc.get("positions", {}) or {}).get("series", {}).get(player, [])
-    best = None
-    for item in series:
-        pos_frame, x, y, state = item[0], item[1], item[2], item[3] if len(item) > 3 else None
-        if x is None or y is None or state in ("lost", "uncertain"):
-            continue
-        gap = abs(int(pos_frame) - frame)
-        if gap <= NEAREST_POSITION_FRAMES and (best is None or gap < best[0]):
-            best = (gap, float(x), float(y))
-    return None if best is None else (best[1], best[2])
+    return player_foot_at(series, frame, NEAREST_POSITION_FRAMES)
 
 
 def _camel(name: str) -> str:
     return FEATURE_ALIASES.get(name, name)
 
 
-def _points(track: Mapping[int, R.Point], lo: int, hi: int, fps: float) -> list[dict]:
-    out = []
-    for frame in range(lo, hi + 1):
-        point = track.get(frame)
-        if point is None:
-            continue
-        out.append({
-            "frame": frame,
-            "time_s": round(frame / fps, 3),
-            "x_px": round(point.x, 2),
-            "y_px": round(point.y, 2),
-            "confidence": round(point.confidence, 4),
-            "interpolated": point.interpolated,
-        })
-    return out
+def _points(track: O.ObservedTrack, lo: int, hi: int) -> list[dict]:
+    return [O.point_record(point) for point in track.window(lo, hi)]
 
 
-def build_record(*, job_id: str, run_id: str, shot: Mapping, track: Mapping[int, R.Point], doc: Mapping,
-                 fps: float, width: int, height: int, speed_ref: Optional[float], court_calibrated: bool) -> dict:  # noqa: C901
+def person_labels(shot: Mapping) -> tuple[Optional[str], Optional[str]]:
+    """(a person's six-class label, a person's note outside the six classes such as "unknown" or a legacy label)."""
+    manual = shot.get("type") if shot.get("type_source") == "manual" and shot.get("type") in SIX_CLASSES else None
+    note = shot.get("person_label_note")
+    return manual, (note if note not in SIX_CLASSES else None)
+
+
+def build_record(*, job_id: str, run_id: str, shot: Mapping, track: O.ObservedTrack, doc: Mapping,
+                 speed_ref: Optional[float], court_calibrated: bool, config: Optional[Mapping] = None) -> dict:  # noqa: C901
     frame = int(shot["frame"])
     player = shot.get("player")
     foot = player_foot(doc, player, frame)
+    rules = R.CONFIG if config is None else config
     result = R.classify_contact(
-        track, frame, fps=fps, width=width, height=height, speed_ref=speed_ref,
+        track, frame, fps=track.fps, width=track.width, height=track.height, speed_ref=speed_ref,
         player_foot=foot, court_calibrated=court_calibrated, contact_status=shot.get("contact_status", "candidate"),
+        config=rules,
     )
     features = {_camel(name): value for name, value in result["features"].items()}
-    contact_point = track.get(frame)
-    if contact_point is None:
-        near = [track[f] for f in (frame - 2, frame - 1, frame + 1, frame + 2) if f in track]
-        contact_point = near[0] if near else None
-    before = _points(track, frame - R.CONFIG["window_before"], frame - 1, fps)
-    after = _points(track, frame + 1, frame + R.CONFIG["window_after"], fps)
+    contact_point = O.contact_point(track, frame)
+    lo, hi = frame - rules["window_before"], frame + rules["window_after"]
+    before = _points(track, lo, frame - 1)
+    after = _points(track, frame + 1, hi)
     distance = result["features"].get("contact_net_m")
+    manual, note = person_labels(shot)
+    contact_status = shot.get("contact_status", "candidate")
+    speed = {**O.image_speed_around(track, frame),
+             "basis": "confirmed_contact" if contact_status == "confirmed" else "automatic_candidate"}
+    last_frame = track.last_frame
+    truncated = None
+    if len(after) < rules["window_after"]:
+        truncated = "video_end" if last_frame is not None and hi > last_frame else "tracking"
+    window_counts = track.counts(lo, hi)
     return {
         "schema": SCHEMA,
         "job_id": job_id,
         "run_id": run_id,
         "shot_id": f"{job_id}-frame-{frame}",
+        "timeline_id": shot.get("id"),
         "frame": frame,
-        "timestamp_s": round(frame / fps, 3),
+        "timestamp_s": round(track.time_of(frame), 3),
         "player": player,
-        "contact_status": shot.get("contact_status", "candidate"),
+        "contact_status": contact_status,
         "best_guess_label": result["best_guess_label"],
+        "label": manual or result["best_guess_label"],
+        "label_source": "manual" if manual else "trajectory_estimate",
         "review_status": result["review_status"],
         "evidence_tier": result["evidence_tier"],
         "evidence_quality": result["evidence_quality"],
         "rule_version": R.RULE_VERSION,
-        "frame_size": [width, height],
+        "observed_2d_version": O.VERSION,
+        "frame_size": [track.width, track.height],
         "label_kind": "trajectory_estimate_unverified",
-        "manual_label": shot.get("type") if shot.get("type_source") == "manual" else None,
+        "manual_label": manual,
+        "person_label_note": note,
         "contact_image": {
             "x_px": None if contact_point is None else round(contact_point.x, 2),
             "y_px": None if contact_point is None else round(contact_point.y, 2),
             "x_normalized": result["features"].get("contact_x_norm"),
             "y_normalized": result["features"].get("contact_y_norm"),
+            "coordinate_space": O.COORDINATE_SPACE,
         },
         "player_court_context": {
             "court_calibrated": court_calibrated,
@@ -145,12 +153,29 @@ def build_record(*, job_id: str, run_id: str, shot: Mapping, track: Mapping[int,
             "player_foot_y_m": foot[1] if foot else None,
             "distance_to_net_m": distance,
             "relative_to_net": relative_to_net(distance),
+            "coordinate_space": "floor-plane metres of the player's foot (court calibrated only)",
         },
         "trajectory_before": before,
         "trajectory_after": after,
+        "rejected_points": [item.as_record() for item in track.rejected_in(lo, hi)],
+        "tracking_checks": O.tracking_checks(track, lo, hi),
+        "window": {
+            "first_frame": lo,
+            "last_frame": hi,
+            "before": {"expected": rules["window_before"], "kept": len(before)},
+            "after": {"expected": rules["window_after"], "kept": len(after), "truncated_reason": truncated},
+            "detected": window_counts["detected"],
+            "interpolated": window_counts["interpolated"],
+            "rejected": window_counts["rejected"],
+            "invalid_steps": window_counts["invalid_steps"],
+        },
+        "image_speed": speed,
+        "detected_ratio": result["features"].get("detected_ratio"),
+        "interpolated_ratio": result["features"].get("interpolated_ratio"),
         "features": {key: features[key] for key in sorted(features)},
         "scores": result["scores"],
         "top3": result["top3"],
+        "margin": result["margin"],
         "missing_features": result["missing_features"],
         "review_reasons": result["review_reasons"],
         "quality_warnings": result["quality_warnings"],
@@ -159,28 +184,31 @@ def build_record(*, job_id: str, run_id: str, shot: Mapping, track: Mapping[int,
 
 
 def build_records(doc: Mapping, shuttle_doc: Mapping, *, job_id: str, run_id: str, config: Optional[Mapping] = None,
-                  video: Optional[Mapping] = None) -> tuple[list[dict], dict]:
+                  video: Optional[Mapping] = None, track: Optional[O.ObservedTrack] = None,
+                  observed_config: Optional[O.Config] = None) -> tuple[list[dict], dict]:
     """Records in timeline order, one per shot of the match document, plus the inputs used.
 
     video is the analysis's own video block (width, height, fps). It is used only when the shuttle file lacks them.
+    track is the sanitized track of the same shuttle file, when the caller already has it.
     """
-    settings = dict(R.CONFIG if config is None else config)
+    rules = dict(R.CONFIG if config is None else config)
     video = video or {}
-    fps = float(shuttle_doc.get("fps") or video.get("fps") or doc.get("fps") or 30.0)
-    width = int(shuttle_doc.get("source_width") or video.get("width") or 0)
-    height = int(shuttle_doc.get("source_height") or video.get("height") or 0)
+    if track is None:
+        track = O.sanitize(shuttle_doc, width=video.get("width"), height=video.get("height"),
+                           fps=video.get("fps") or doc.get("fps"), config=observed_config or O.DEFAULT_CONFIG)
     shots = doc.get("shots", {}).get("items", [])
-    if shots and (width <= 0 or height <= 0 or fps <= 0):
+    if shots and (track.width <= 0 or track.height <= 0 or track.fps <= 0):
         raise R.PipelineIntegrityError(int(shots[0]["frame"]), "the analysis has no frame size or frame rate")
-    track = R.build_track(shuttle_doc, conf_threshold=float(settings["conf_threshold"]), smoothing=int(settings["smoothing"]))
-    speed_ref = R.video_speed_reference(track, fps)
+    speed_ref = O.speed_reference(track)
     court_calibrated = doc.get("court", {}).get("status") == "calibrated"
-    records = []
-    for shot in doc.get("shots", {}).get("items", []):
-        records.append(build_record(job_id=job_id, run_id=run_id, shot=shot, track=track, doc=doc, fps=fps, width=width,
-                                    height=height, speed_ref=speed_ref, court_calibrated=court_calibrated))
-    return records, {"fps": fps, "width": width, "height": height, "speed_ref_px_s": speed_ref,
-                     "court_calibrated": court_calibrated, "config": {k: list(v) if isinstance(v, tuple) else v for k, v in settings.items()}}
+    records = [
+        build_record(job_id=job_id, run_id=run_id, shot=shot, track=track, doc=doc, speed_ref=speed_ref,
+                     court_calibrated=court_calibrated, config=rules)
+        for shot in shots
+    ]
+    return records, {"fps": track.fps, "width": track.width, "height": track.height, "speed_ref_px_s": speed_ref,
+                     "court_calibrated": court_calibrated, "observed_2d": track.summary(),
+                     "config": {k: list(v) if isinstance(v, tuple) else v for k, v in rules.items()}}
 
 
 def summarise(records: list[dict], inputs: dict) -> dict:
@@ -197,34 +225,47 @@ def summarise(records: list[dict], inputs: dict) -> dict:
         for reason in record["review_reasons"]:
             key = reason.split(" (")[0]
             reasons[key] = reasons.get(key, 0) + 1
+    speeds = [record["image_speed"]["px_per_s"] for record in records if record["image_speed"]["px_per_s"] is not None]
     return {
         "schema": SCHEMA,
         "rule_version": R.RULE_VERSION,
+        "observed_2d_version": O.VERSION,
         "records": len(records),
         "label_distribution": labels,
         "evidence_tier_distribution": tiers,
         "evidence_quality_distribution": qualities,
         "review_status": status,
         "review_reasons": sorted(reasons.items(), key=lambda kv: kv[1], reverse=True),
+        "image_speed_px_s": {
+            "unit": "px/s",
+            "records_with_speed": len(speeds),
+            "min": min(speeds) if speeds else None,
+            "median": round(median(speeds), 1) if speeds else None,
+            "max": max(speeds) if speeds else None,
+            "note": "All timeline rows, candidates included. Official statistics use confirmed contacts only.",
+        },
         "label_kind": "trajectory_estimate_unverified",
-        "validation": "not validated: no ground-truth evaluation",
+        "validation": "not evaluated: no ground truth",
         "inputs": inputs,
     }
 
 
 def write_dataset(job_dir: str, *, job_id: str, doc: Mapping, shuttle_doc: Mapping, court_doc: Optional[Mapping],
-                  video: Optional[Mapping] = None) -> dict:
+                  video: Optional[Mapping] = None, track: Optional[O.ObservedTrack] = None,
+                  records: Optional[list[dict]] = None, extra: Optional[Mapping] = None) -> dict:
     """Writes the JSONL dataset and summary. Replaces only files under derived/."""
     created = datetime.now(timezone.utc)
     run_id = f"{created.strftime('%Y%m%dT%H%M%SZ')}-{R.RULE_VERSION.replace('/', '-')}"
-    records, meta = build_records(doc, shuttle_doc, job_id=job_id, run_id=run_id, video=video)
-    if len(records) != len(doc.get("shots", {}).get("items", [])):
+    built, meta = build_records(doc, shuttle_doc, job_id=job_id, run_id=run_id, video=video, track=track)
+    if records is not None:
+        built = [{**record, "run_id": run_id} for record in records]
+    if len(built) != len(doc.get("shots", {}).get("items", [])):
         raise R.PipelineIntegrityError(0, "dataset rows do not match the shot timeline")
     inputs = {
         "shuttle_trajectory.json": _sha256(os.path.join(job_dir, "shuttle_trajectory.json")),
         "court_coordinates.json": _sha256(os.path.join(job_dir, "court_coordinates.json")),
     }
-    summary = summarise(records, inputs)
+    summary = summarise(built, inputs)
     summary.update({
         "job_id": job_id,
         "run_id": run_id,
@@ -233,12 +274,14 @@ def write_dataset(job_dir: str, *, job_id: str, doc: Mapping, shuttle_doc: Mappi
         "frame_size": [meta["width"], meta["height"]],
         "speed_reference_px_s_p95": None if meta["speed_ref_px_s"] is None else round(meta["speed_ref_px_s"], 2),
         "court_calibrated": meta["court_calibrated"],
+        "observed_2d": meta["observed_2d"],
         "config": meta["config"],
+        **(dict(extra) if extra else {}),
     })
     os.makedirs(derived_dir(job_dir), exist_ok=True)
     tmp = dataset_path(job_dir) + ".tmp"
     with open(tmp, "w", encoding="utf-8") as handle:
-        for record in records:
+        for record in built:
             handle.write(json.dumps(record, ensure_ascii=False, sort_keys=False) + "\n")
     os.replace(tmp, dataset_path(job_dir))
     with open(summary_path(job_dir) + ".tmp", "w", encoding="utf-8") as handle:

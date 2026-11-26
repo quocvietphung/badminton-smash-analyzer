@@ -18,9 +18,10 @@ import {
   timeAtFrame,
   type IdentityEvent,
   type TrackBox,
-  type TrajectoryFrameLike,
 } from "@/lib/local-ai/evidence";
 import { loadEvidenceBundle, type EvidenceBundle } from "@/lib/local-ai/evidence-data";
+import { annotatedTrail, orderedPoints, type ObservedPoint } from "@/lib/match/observed-path";
+import type { Observed2DBlock } from "@/lib/match/types";
 import { drawOverlay } from "@/lib/local-ai/overlay-draw";
 import type { StudioLanguage } from "@/lib/studio-types";
 import { CorrectionPanel } from "./correction-panel";
@@ -44,27 +45,15 @@ type Props = {
   meta: EvidenceMeta;
   revision: number;
   onChanged: () => void;
+  /** The backend's shared observed-2D track (match document); the trail draws only its points. */
+  observed: Observed2DBlock | null;
 };
+
+const NO_POINTS: ObservedPoint[] = [];
 
 const NO_BOXES: TrackBox[] = [];
 
-/** The last few visible shuttle positions up to a frame, plus the current position if it is recent enough. */
-function recentShuttle(
-  frames: TrajectoryFrameLike[],
-  frame: number,
-  count: number,
-): { trail: Array<[number, number]>; current: [number, number] | null } {
-  const visible = frames.filter(
-    (item) => item.visible && item.x !== null && item.y !== null && item.frame <= frame && item.frame > frame - 60,
-  );
-  const trail = visible.slice(-count).map((item): [number, number] => [item.x as number, item.y as number]);
-  const last = visible.length > 0 ? visible[visible.length - 1] : null;
-  const current: [number, number] | null =
-    last && frame - last.frame <= 3 ? [last.x as number, last.y as number] : null;
-  return { trail, current };
-}
-
-export function EvidenceViewer({ apiBase, jobId, language, meta, revision, onChanged }: Props) {
+export function EvidenceViewer({ apiBase, jobId, language, meta, revision, onChanged, observed }: Props) {
   const copy = EVIDENCE_COPY[language];
   const [bundle, setBundle] = useState<EvidenceBundle | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -133,7 +122,8 @@ export function EvidenceViewer({ apiBase, jobId, language, meta, revision, onCha
   );
   const boxesNow = useMemo(() => boxIndex.get(currentFrame) ?? NO_BOXES, [boxIndex, currentFrame]);
   const outline = useMemo(() => courtOutline(bundle?.court?.homography_image_from_court ?? null), [bundle]);
-  const shuttle = useMemo(() => recentShuttle(bundle?.shuttle?.frames ?? [], currentFrame, 8), [bundle, currentFrame]);
+  const observedPoints = useMemo(() => (observed ? orderedPoints(observed) : NO_POINTS), [observed]);
+  const shuttle = useMemo(() => annotatedTrail(observedPoints, currentFrame, 8), [observedPoints, currentFrame]);
   const copyStatus = copy.statusLabels;
 
   useEffect(() => {

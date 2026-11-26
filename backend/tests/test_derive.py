@@ -141,3 +141,74 @@ def test_court_plane_is_reported_only_when_the_court_is_calibrated():
     assert "court_plane" in D.movement_payload(calibrated, FPS, WIDTH, HEIGHT, 40, calibrated_court())
     plain = run_derive(scene(40, people), uncalibrated_court())
     assert "court_plane" not in D.movement_payload(plain, FPS, WIDTH, HEIGHT, 40, uncalibrated_court())
+
+
+# The shared observed-2d/v1 track drives the drawn trail and the rally candidates (synthetic; not evidence for footage).
+from app.analytics import observed2d as O  # noqa: E402
+
+
+def shuttle_doc(frames, width=WIDTH, height=HEIGHT, fps=FPS):
+    return {
+        "source_width": width, "source_height": height, "fps": fps, "timestamp_source": "frame_rate_derived",
+        "frames": [
+            {"frame": f.frame, "time_s": round(f.frame / fps, 6), "x": f.x if f.visible else None,
+             "y": f.y if f.visible else None, "visible": f.visible, "confidence": f.confidence, "refined": f.refined}
+            for f in frames
+        ],
+    }
+
+
+def moving_run(start, length, x0=400.0, y0=500.0, dx=12.0, dy=3.0, confidence=0.9):
+    return [
+        TrackNetFrame(frame=f, x=x0 + dx * (f - start), y=y0 + dy * (f - start), visible=True, confidence=confidence, refined=False)
+        for f in range(start, start + length)
+    ]
+
+
+def test_rally_candidates_with_the_observed_track_skip_rejected_points():
+    frames = moving_run(0, 60)
+    # The first 12 detections are below the 0.5 confidence gate: the observed-2d check rejects them.
+    frames[:12] = [TrackNetFrame(f.frame, f.x, f.y, True, 0.2, False) for f in frames[:12]]
+    observed = O.sanitize(shuttle_doc(frames))
+    raw = D.rally_candidates(frames, FPS)
+    kept = D.rally_candidates(frames, FPS, observed)
+    assert [(r["start_frame"], r["end_frame"]) for r in raw] == [(0, 59)]
+    assert [(r["start_frame"], r["end_frame"]) for r in kept] == [(12, 59)]
+    assert kept[0]["start_s"] == pytest.approx(12 / FPS, abs=1e-3)
+    assert O.VERSION in kept[0]["method"]
+
+
+class _Writer:
+    def __init__(self):
+        self.frames = 0
+
+    def write(self, image):
+        self.frames += 1
+
+
+def test_the_annotated_trail_skips_a_removed_tracker_jump_and_breaks_where_the_run_breaks():
+    frames = moving_run(0, 20) + moving_run(20, 10, x0=1400.0, y0=300.0)  # frame 20 jumps away and stays: a run break
+    frames[8] = TrackNetFrame(8, frames[8].x - 300.0, frames[8].y + 420.0, True, 0.9, False)
+    frames[9] = TrackNetFrame(9, frames[9].x - 310.0, frames[9].y + 430.0, True, 0.9, False)
+    jump = {(frames[8].x, frames[8].y), (frames[9].x, frames[9].y)}
+    observed = O.sanitize(shuttle_doc(frames))
+    assert sorted(item.frame for item in observed.rejected if item.reason == "tracker_jump") == [8, 9]
+    drawn = {}
+
+    def render(index, image, players, shuttle, trail, outline):
+        drawn[index] = (shuttle, list(trail))
+        return image
+
+    writer = _Writer()
+    D.derive(
+        fps=FPS, width=WIDTH, height=HEIGHT, total_frames=30, detections={}, shuttle=frames, court=uncalibrated_court(),
+        corrections_doc={"entries": []}, config=D.DeriveConfig(mode="singles", render=True),
+        frames=((index, np.zeros((4, 4, 3), dtype=np.uint8)) for index in range(30)), render=render, writer=writer,
+        observed=observed,
+    )
+    assert writer.frames == 30
+    assert drawn[8][0] is None and drawn[9][0] is None  # the removed excursion is not drawn as the shuttle
+    assert all(point not in jump for _, trail in drawn.values() for point in trail)
+    # The 8-point trail is frames 1-7 and 10: the run continues across the removed excursion.
+    assert drawn[10][1] == [(frames[i].x, frames[i].y) for i in (1, 2, 3, 4, 5, 6, 7, 10)]
+    assert drawn[20][1] == [(frames[20].x, frames[20].y)]  # the implausible step ends the run: a new trail starts

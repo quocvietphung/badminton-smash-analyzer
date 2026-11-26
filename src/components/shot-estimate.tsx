@@ -26,7 +26,7 @@ export function estimateBadge(shot: MatchShot, estimate: TrajectoryEstimate | un
   const copy = TRAJECTORY_COPY[language];
   if (personStroke(shot)) return { tone: "manual", text: copy.manual };
   if (!estimate) return { tone: "pending", text: copy.notBuilt };
-  return { tone: "estimate", text: copy.badgeShort };
+  return { tone: "estimate", text: copy.badge };
 }
 
 function tierText(tier: TrajectoryEstimate["evidence_tier"], language: StudioLanguage): string {
@@ -50,7 +50,22 @@ export function num(value: unknown, digits = 0): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : "–";
 }
 
-/** The shuttle path around the contact, in image pixels. Interpolated points are hollow; the contact is marked. */
+function isFill(point: TrajectoryPoint): boolean {
+  return point.source ? point.source === "interpolated" : point.interpolated;
+}
+
+/** Polylines of consecutive points of one backend run (records without runs: one line). */
+function runsOf(points: TrajectoryPoint[]): TrajectoryPoint[][] {
+  const runs: TrajectoryPoint[][] = [];
+  for (const point of points) {
+    const last = runs[runs.length - 1];
+    if (last && (point.segment === undefined || last[last.length - 1].segment === point.segment)) last.push(point);
+    else runs.push([point]);
+  }
+  return runs;
+}
+
+/** The shuttle path around the contact, in image pixels. InpaintNet fills are hollow, removed points are crosses. */
 export function TrajectoryMiniChart({ estimate, language }: { estimate: TrajectoryEstimate; language: StudioLanguage }) {
   const copy = TRAJECTORY_COPY[language];
   const [width, height] = estimate.frame_size;
@@ -73,15 +88,29 @@ export function TrajectoryMiniChart({ estimate, language }: { estimate: Trajecto
     <figure className={styles.miniChart}>
       <figcaption className={styles.muted}>{copy.miniChart}</figcaption>
       <svg viewBox={`${minX} ${minY} ${Math.max(1, maxX - minX)} ${Math.max(1, maxY - minY)}`} role="img" aria-label={copy.miniChart}>
-        <polyline points={line(before)} fill="none" stroke="#8aa7a0" strokeWidth={Math.max(2, (maxX - minX) / 160)} strokeDasharray="6 4" />
-        <polyline points={line(after)} fill="none" stroke="#6ee9c3" strokeWidth={Math.max(2.5, (maxX - minX) / 140)} strokeLinecap="round" />
-        {all.filter((p) => p.interpolated).map((p) => (
+        {runsOf(before).map((run, index) => (
+          <polyline key={`b-${index}`} points={line(run)} fill="none" stroke="#8aa7a0" strokeWidth={Math.max(2, (maxX - minX) / 160)} strokeDasharray="6 4" />
+        ))}
+        {runsOf(after).map((run, index) => (
+          <polyline key={`a-${index}`} points={line(run)} fill="none" stroke="#6ee9c3" strokeWidth={Math.max(2.5, (maxX - minX) / 140)} strokeLinecap="round" />
+        ))}
+        {all.filter(isFill).map((p) => (
           <circle key={`i-${p.frame}`} cx={p.x_px} cy={p.y_px} r={Math.max(3, (maxX - minX) / 120)} fill="none" stroke="#e6b450" strokeWidth={1.5} />
         ))}
+        {(estimate.rejected_points ?? []).filter((p) => p.x_px !== null && p.y_px !== null).map((p) => {
+          const r = Math.max(4, (maxX - minX) / 90);
+          return (
+            <g key={`r-${p.frame}`} stroke="#8fa3bd" strokeWidth={1.5}>
+              <title>{`${p.frame} · ${copy.rejectedLegend} (${p.reason})`}</title>
+              <line x1={(p.x_px as number) - r} y1={(p.y_px as number) - r} x2={(p.x_px as number) + r} y2={(p.y_px as number) + r} />
+              <line x1={(p.x_px as number) - r} y1={(p.y_px as number) + r} x2={(p.x_px as number) + r} y2={(p.y_px as number) - r} />
+            </g>
+          );
+        })}
         <circle cx={contact.x_px} cy={contact.y_px} r={Math.max(6, (maxX - minX) / 60)} fill="#ffffff" stroke="#6ee9c3" strokeWidth={3} />
       </svg>
       <p className={styles.muted}>
-        <span className={styles.legendDashed} /> {copy.before} · <span className={styles.legendSolid} /> {copy.after} · ◯ {copy.contact}
+        <span className={styles.legendDashed} /> {copy.before} · <span className={styles.legendSolid} /> {copy.after} · ◯ {copy.contact} · × {copy.rejectedLegend}
       </p>
     </figure>
   );
@@ -158,6 +187,20 @@ export function ShotEstimateDrawer({
         <dd>{rows.map(([label, value]) => `${label} ${value.toFixed(2)}`).join(" · ")}</dd>
         <dt>{copy.scores}</dt>
         <dd>{scores.map(([label, value]) => `${label} ${value.toFixed(2)}`).join(" · ")}</dd>
+        <dt>{copy.imageSpeed}</dt>
+        <dd>
+          {estimate.image_speed && estimate.image_speed.px_per_s !== null
+            ? `${num(estimate.image_speed.px_per_s)} ${copy.pxs} · ${estimate.image_speed.basis === "confirmed_contact" ? copy.basisConfirmed : copy.basisCandidate}`
+            : copy.unavailable}
+        </dd>
+        <dt>{copy.ratios}</dt>
+        <dd>{`${num(estimate.detected_ratio ?? f.detected_ratio, 2)} / ${num(estimate.interpolated_ratio ?? f.interpolated_ratio, 2)}`}</dd>
+        <dt>{copy.removed}</dt>
+        <dd>
+          {estimate.rejected_points && estimate.rejected_points.length > 0
+            ? estimate.rejected_points.map((point) => `${point.frame} (${point.reason})`).join(", ")
+            : copy.removedNone}
+        </dd>
         <dt>{copy.speedBefore}</dt>
         <dd>{`${num(f.speed_before_median_px_s)} / ${num(f.speed_before_max_px_s)} ${copy.pxs}`}</dd>
         <dt>{copy.speedAfter}</dt>
@@ -200,6 +243,12 @@ export function ShotEstimateDrawer({
         <dd>{estimate.run_id}</dd>
         <dt>{copy.rule}</dt>
         <dd>{estimate.rule_version}</dd>
+        {estimate.observed_2d_version ? (
+          <>
+            <dt>{copy.observedVersion}</dt>
+            <dd>{estimate.observed_2d_version}</dd>
+          </>
+        ) : null}
       </dl>
       {manual ? <p className={styles.muted}>{copy.manual}: {shot.type}</p> : null}
       <div className={styles.actions}>

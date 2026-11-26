@@ -121,7 +121,7 @@ export type VideoAnalysisShotEntry = {
   speedBasis: "confirmed_contact" | "automatic_candidate" | null;
   /** A shot type a person entered or accepted. */
   shotLabel: string | null;
-  /** Trajectory estimate (trajectory-rules/v1): unverified, never a fact. */
+  /** Trajectory estimate (trajectory-rules): unverified, never a fact. */
   trajectoryEstimate: { label: string; evidenceQuality: string; reviewStatus: string } | null;
 };
 
@@ -226,7 +226,7 @@ type CourtTrackRow = { track_id: number; path_length_m: number; avg_speed_m_per_
 
 /** Build the coach snapshot. Court metres are shared only when the court was calibrated. */
 /**
- * Trajectory estimates (trajectory-rules/v1) and the user's own labels, counted apart. Estimates are always marked
+ * Trajectory estimates (trajectory-rules) and the user's own labels, counted apart. Estimates are always marked
  * unverified; a person's label is never reported as an estimate.
  */
 function buildShotClassification(match: MatchDocument | null): VideoAnalysisSnapshot["shotClassification"] {
@@ -236,11 +236,12 @@ function buildShotClassification(match: MatchDocument | null): VideoAnalysisSnap
   const shots = match.shots.items;
   const estimates = shots.filter((shot) => shot.type_source === "trajectory_estimate");
   const userLabels = shots.filter((shot) => shot.type_source === "manual").length;
+  const ruleVersion = shots.find((shot) => shot.trajectory?.rule_version)?.trajectory?.rule_version ?? shots.find((shot) => shot.model_version)?.model_version ?? null;
   return {
     status: estimates.length > 0 ? "predicted" : "no_predictions",
-    source: "trajectory_rules_v1_unverified",
+    source: "trajectory_rules_unverified",
     unverified: true,
-    model: "trajectory-rules/v1",
+    model: ruleVersion,
     checkpoint: null,
     reason: "Rule-based estimate from the shuttle trajectory and image speed. Not validated.",
     predicted: estimates.length,
@@ -362,22 +363,23 @@ export function buildVideoAnalysisSnapshot(
     shots: { status: results.shot_classification.status, reason: results.shot_classification.reason },
     shotClassification: buildShotClassification(match),
     shotTimeline: buildShotTimeline(match),
+    // Estimated 3D — monocular experimental. Only shots that passed every gate carry a speed; nothing else is sent.
     physicalSpeed: {
-      status: match?.summary.speed.physical_measurements ? "available" : "unavailable",
-      label: match?.summary.speed.physical_label ?? "Physical speed unavailable",
+      status: (match?.summary.speed.estimated_3d?.available ?? 0) > 0 ? "available" : "unavailable",
+      label: match?.summary.speed.estimated_3d?.label ?? "Physical trajectory unavailable",
       measurements: (match?.shots.items ?? []).flatMap((shot) => {
-        const speed = shot.physical_speed;
-        if (speed.status !== "available" || speed.speed_first_observed_kmh === null) return [];
+        const estimate = shot.estimated_3d;
+        if (!estimate || estimate.status !== "available" || estimate.speed_candidate_kmh === null) return [];
         return [{
           frame: shot.frame,
           timeS: shot.time_s,
-          firstObservedKmh: speed.speed_first_observed_kmh,
-          atNetKmh: speed.speed_at_net_kmh,
-          atContactExtrapolatedKmh: speed.speed_at_contact_extrapolated_kmh,
-          uncertaintyKmh: speed.uncertainty_kmh,
-          method: speed.method,
-          calibrationSource: speed.calibration.source ?? null,
-          reprojectionRmsPx: speed.quality.reprojection_rms_px ?? null,
+          firstObservedKmh: estimate.speed_candidate_kmh,
+          atNetKmh: null,
+          atContactExtrapolatedKmh: null,
+          uncertaintyKmh: estimate.speed_range_kmh,
+          method: estimate.method ?? "Estimated 3D — monocular experimental",
+          calibrationSource: null,
+          reprojectionRmsPx: estimate.reprojection_rms_px ?? null,
           notRadarValidated: true as const,
         }];
       }).slice(0, 20),

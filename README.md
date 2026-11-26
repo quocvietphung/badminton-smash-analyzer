@@ -1,31 +1,31 @@
 # SmashLab
 
-SmashLab is an offline badminton video analysis studio. You analyse a match or training clip on your own computer. A local Docker backend tracks the shuttle and the players, writes an annotated video and structured data, and the studio shows the results with timestamps and frame numbers. An AI Coach answers questions from that data only.
+SmashLab analyses badminton clips on your computer. Its Docker backend tracks the shuttle and players, then produces an annotated replay, a shot timeline and frame-level evidence. The optional AI Coach uses derived analysis data to answer questions about the selected session.
 
-![SmashLab demo](docs/media/smashlab-demo.gif)
+![SmashLab walkthrough showing an annotated replay, the Actual 2D trajectory, the Side view and the detailed shot timeline](docs/media/smashlab-demo.gif)
 
-| Video analysis and timeline | Trajectory estimate drawer |
+*Walkthrough of a saved Sample A analysis in the current studio.*
+
+| Results dashboard | Timeline and shot evidence |
 |---|---|
-| ![Overview](docs/media/smashlab-overview.png) | ![Drawer](docs/media/smashlab-trajectory-drawer.png) |
+| ![Annotated replay, player statistics and court positions](docs/media/smashlab-overview.png) | ![Court map, shot timeline and selected contact evidence](docs/media/smashlab-timeline.png) |
 
-> **Status: research prototype.** Every shot label is a rule-based **trajectory estimate · unverified**. Nothing in SmashLab is validated against ground truth yet. Coverage and detection counts are not accuracy scores.
+Sample A footage in the walkthrough and stills is by Badminton Sphere, via [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Wang_Zhiyi_triumph_in_all-Chinese_China_Open_finals_I_China_Open_2025.webm) ([CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) as listed there, with license review pending). The sample is trimmed and displayed with SmashLab's tracking annotations.
 
-## What it does
+## Studio
 
-- **Video analysis.** Upload an MP4 or MOV (up to 200 MB and 120 s), or pick one of four test samples. Progress is shown stage by stage.
-- **Tracking.** TrackNetV3 with InpaintNet finds the shuttle. YOLOX-s finds the people. Logical identities P1 to P4 follow court position and motion. Identities are never reassigned silently.
-- **Court.** Automatic court calibration with a manual four-corner fallback. Floor-plane metres are shown only when the calibration is valid.
-- **Shot timeline.** One row per contact candidate with its player, time, a six-class trajectory estimate (smash, clear, drop, drive, net shot, lift), image-space speed in px/s, evidence tier and quality, and a review status.
-- **Evidence and corrections.** The original and the annotated video play in sync. Manual labels and corrections are stored apart from the raw output, and they are never applied automatically.
-- **AI Coach.** Answers questions about the open analysis, grounded in its data and a short reference shelf. It receives derived numbers only, never video.
-- **Sessions and evaluation.** Each sample is one session. Reanalysis creates a new job and never overwrites the old one. The evaluation panel reports measured values only.
-- **Languages.** English, Vietnamese and German for all user-visible text.
+- **Video analysis** accepts MP4 or MOV clips up to 200 MB and 120 seconds and offers four prepared samples. Results include an Annotated/Original replay toggle, player summaries, court occupancy, contact positions, distance covered and the **Shot speed monitor**.
+- **Shot trajectory** follows the selected contact. **Actual 2D** plots shuttle positions over a video frame and identifies TrackNet detections, InpaintNet fills and rejected points. **Side view** illustrates a class template for the selected shot.
+- **Details** contains the **Shot timeline**, evidence, corrections, models and statistics. Each timeline row has a timestamp, source frame, player, contact status, evidence quality and a rule-based estimate from six classes: smash, clear, drop, drive, net shot and lift. **Export shot trajectory dataset** saves one JSONL record per row. Manual labels and contact corrections are stored separately from raw inference.
+- **Saved sessions** reopens completed analyses and shows run history, tracking coverage and measured processing metrics. **AI Coach** answers from the selected analysis and relevant references. **Settings** includes English, Vietnamese and German.
 
-## What it does not do
+## Reading the results
 
-- It does not validate shot types, rallies or speeds. Speeds are image-space pixels per second, never km/h.
-- It does not recognise faces. Identity uses court position, motion continuity and body appearance only.
-- It does not score technique.
+SmashLab is a research prototype. Shot labels are **trajectory estimates · unverified**. Contact and rally candidates are heuristic, and the sample evaluation has no ground-truth accuracy scores.
+
+- **Shuttle motion** uses image-space `px/s` from valid TrackNet detection steps. Confirmed contacts and candidate speeds appear separately in the summary.
+- **Player movement** uses floor-plane metres where court calibration is valid and image pixels otherwise. Player IDs track motion and body appearance. Court calibration includes a manual four-corner fallback.
+- **3D speed** has stricter input requirements. Monocular fitting is experimental and reports physical trajectory availability per shot. Stereo triangulation requires two calibrated and synchronised views. The bundled single-camera samples show the observed 2D track, with physical trajectory unavailable and stereo marked **NOT RUN**. [Calculation details](docs/SHOT_DASHBOARD_CALCULATIONS.md) · [3D experiments](docs/EXPERIMENTAL_3D_SPEED.md)
 
 ## Architecture
 
@@ -34,12 +34,12 @@ flowchart LR
   B[Browser<br/>Next.js studio] -->|/api/backend proxy<br/>adds API token| S[Studio server<br/>Next.js 16 · Node 22]
   S -->|HTTP| A[FastAPI backend<br/>Docker · smashlab-ai]
   A --> Q[(SQLite job store<br/>queue + worker)]
-  A --> P[Pipeline<br/>TrackNetV3 + InpaintNet<br/>YOLOX-s · ByteTrack-style tracker<br/>court calibration]
+  A --> P[Pipeline<br/>TrackNetV3 + InpaintNet<br/>YOLOX-s · court calibration]
   P --> O[(outputs/&lt;job&gt;/<br/>raw/ · results · derived/)]
-  A --> D[Derivation<br/>match analytics · corrections<br/>trajectory rules v1]
+  A --> D[Derivation<br/>filtered 2D tracks · match analytics<br/>trajectory rules v2 · corrections]
   D --> O
   S -->|coach-dataset JSON<br/>+ question| C[AI Coach route]
-  C -->|Entra token from az login<br/>token file in Docker| Z[(Azure OpenAI<br/>chat model)]
+  C -->|optional| Z[(Azure OpenAI<br/>chat model)]
 ```
 
 | Layer | Technology |
@@ -65,77 +65,51 @@ Where things live:
 
 These steps assume macOS or Linux with Docker Desktop. Expect about 3 GB of free memory for the backend container and a few GB of disk for the models and samples.
 
-### 1. Install the prerequisites
+### 1. Prepare the local files
 
-- **Node.js 22** (20.9 or newer works) and npm.
-- **Docker Desktop** with Compose v2.
-- **Python 3.12**, only if you want to run the backend tests on the host.
-- **Azure CLI** (`az`), only if you want the AI Coach. See the Coach section below.
-
-### 2. Clone and install
+Install Docker with Compose v2, Python 3.12 and ffmpeg. The host Python and ffmpeg prepare the sample clips and ONNX exports. Install Node.js 22 and npm if you want to run the studio or its tests on the host.
 
 ```bash
 git clone https://github.com/quocvietphung/badminton-smash-analyzer.git
 cd badminton-smash-analyzer
-npm install
-```
-
-### 3. Download the samples and the models
-
-```bash
 scripts/download-test-data.sh
 ```
 
-This fetches the four Wikimedia Commons samples, trims them, and downloads the YOLOX-s and TrackNetV3 checkpoints. Every file is checked against its SHA-256. Check what is already present without network access:
+The script fetches and trims the Wikimedia Commons clips and downloads the model checkpoints. On a fresh setup, export the TrackNet and InpaintNet ONNX models if they are missing.
 
 ```bash
+python3.12 -m venv backend/.venv-dev
+backend/.venv-dev/bin/python -m pip install -r backend/requirements-export.txt
+scripts/download-test-data.sh --export
 scripts/download-test-data.sh --verify-only
 ```
 
-The TrackNetV3 checkpoints are PyTorch files. The ONNX models used by the backend are exported from them. If the ONNX files are missing after the download, run `scripts/download-test-data.sh --export` with `backend/.venv-dev` set up (see the Verify section).
+For an existing installation, `--verify-only` checks the assets on disk without downloading anything.
 
-### 4. Start the backend
-
-```bash
-docker compose -p smashlab-ai -f docker-compose.yml up -d --build
-curl http://localhost:8000/health        # {"status":"ok"} when the models are loaded
-```
-
-The first build takes several minutes. The backend listens on `localhost:8000` only and accepts uploads only from the studio origin.
-
-### 5. Start the studio
-
-Development server with hot reload:
+### 2. Start the Docker stack
 
 ```bash
-npm run dev
+docker compose -p smashlab-ai up -d --build --wait
+curl -fsS http://localhost:8000/health
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open the studio at [http://localhost:3002](http://localhost:3002). The first build can take several minutes. For frontend development with hot reload, start only the API with `docker compose -p smashlab-ai up -d api`, then run `npm ci` and `npm run dev` to open the studio at [http://localhost:3000](http://localhost:3000).
 
-Or run the studio in Docker, which needs no Node.js on the host:
+### 3. Analyse a sample
+
+1. In **Video analysis**, select **A · Singles rally, clear broadcast view** and click **Run AI Analysis**. For an existing result, use **Open saved result (cached)** and then **Open result** in **Saved sessions**.
+2. In **Results**, find a contact in the **Shot speed monitor** and select its time. Examine the track in **Actual 2D** or switch to **Side view** for the class illustration.
+3. Expand **Details** and select a **Shot timeline** row to inspect its source frame, court context and review status. Use **Export shot trajectory dataset** to save the analysis records.
+4. Select **Ask the coach** to open the optional AI Coach with this analysis.
+
+### 4. Stop or restart later
 
 ```bash
-docker compose -p smashlab-ai -f docker-compose.yml up -d --build web
+docker compose -p smashlab-ai stop
+docker compose -p smashlab-ai start
 ```
 
-Open [http://localhost:3002](http://localhost:3002). The browser never sees the backend address or the API token. The studio server adds them.
-
-### 6. Run your first analysis
-
-1. Open **Video analysis**.
-2. Choose sample **A · Singles rally** and press **Run AI Analysis**. Or upload your own clip.
-3. When the job reaches **Completed**, scroll through the annotated video, the **Shot timeline** and the **Court map**.
-4. Click a row of the timeline. The drawer shows the mini trajectory, the court position of the player, the scores of the six classes, the evidence tier and quality, and the job and rule version.
-5. Open **Saved sessions** to see every sample with its active analysis. **Ask the coach** opens the Coach for that analysis.
-
-### 7. Stop
-
-```bash
-docker compose -p smashlab-ai -f docker-compose.yml down        # keeps the database and outputs
-```
-
-Do not add `-v` unless you want to delete the job database volume.
+These commands preserve the job database, models and analysis outputs.
 
 ## AI Coach (optional, Azure OpenAI)
 
@@ -166,7 +140,7 @@ The Coach uses your Azure OpenAI deployment through your own Azure sign-in. No A
    docker compose -p smashlab-ai -f docker-compose.yml up -d web
    ```
 
-For the development server on port 3000, set the same variables in `.env.local`. The server then uses your `az` sign-in directly, and the token helper is not needed.
+For the development server on port 3000, set the resource, deployment and model-label variables in `.env.local` and use your `az` sign-in directly. The token-file settings and refresh helper are for Docker.
 
 Without this setup the Coach shows "unavailable" and the rest of the studio works normally.
 
@@ -195,6 +169,8 @@ scripts/run-local-test.sh --no-build    # end-to-end test against the running Do
 ## Documentation
 
 - [docs/SHOT_TRAJECTORY_RULES.md](docs/SHOT_TRAJECTORY_RULES.md): the six-class rule set, its evidence tiers and review status.
+- [docs/SHOT_DASHBOARD_CALCULATIONS.md](docs/SHOT_DASHBOARD_CALCULATIONS.md): the dashboard, image-space speed and shared trajectory calculations.
+- [docs/EXPERIMENTAL_3D_SPEED.md](docs/EXPERIMENTAL_3D_SPEED.md): monocular and stereo quality gates and experimental results.
 - [docs/REFERENCE_REVIEW.md](docs/REFERENCE_REVIEW.md): the licence and reuse decision for every source that was read.
 - [docs/LOCAL_AI_TEST_REPORT.md](docs/LOCAL_AI_TEST_REPORT.md): measured runtimes, the test log, and the known limitations.
 - [docs/SECURE_REMOTE_ACCESS.md](docs/SECURE_REMOTE_ACCESS.md): remote access and the site password.

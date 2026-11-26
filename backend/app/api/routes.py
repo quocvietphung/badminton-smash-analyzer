@@ -516,6 +516,13 @@ def add_correction(request: Request, job_id: str, payload: dict = Body(...)):
                 )
             except corrections_service.CorrectionError as exc:
                 raise _error(422, "invalid_correction", str(exc)) from exc
+            # The trajectory dataset carries the reviewed labels, so it is rebuilt from the same files (no model run).
+            # Without this the records would keep the labels of the last build.
+            try:
+                match_document.write_for_job(request.app.state.store, job)
+            except Exception as exc:
+                corrections_service.discard(job.output_dir, entry["id"])
+                raise _error(500, "dataset_rebuild_failed", f"The trajectory dataset could not be rebuilt: {exc}") from exc
         return {"correction": entry, "summary": None, "recomputed": False}
     if not os.path.isfile(os.path.join(job.output_dir, "raw", "inference_meta.json")):
         raise _error(409, "not_recomputable", "This analysis was made before raw outputs were kept, so it cannot take corrections.")

@@ -1,9 +1,10 @@
 """coach-dataset/v1: one JSON document per analysis, for the AI Coach and for the single export.
 
 It holds only values this analysis measured: the player movement on the court map (floor metres when the court is
-calibrated, image pixels otherwise), the shot timeline of P1 and P2 with trajectory estimates, image-space speeds in px/s
-from the shared observed-2d/v1 track, and the evidence behind each estimate. Official speed values use confirmed contacts
-only. Nothing is evaluated against ground truth, and speeds are never converted to km/h.
+calibrated, image pixels otherwise), the shot timeline of every logical identity (P1 and P2 in singles, P1 to P4 in
+doubles) with trajectory estimates, image-space speeds in px/s from the shared observed-2d/v1 track, and the evidence
+behind each estimate. Official speed values use confirmed contacts only. Nothing is evaluated against ground truth, and
+speeds are never converted to km/h.
 
 Built deterministically from this job's files only. A person's shot label is reported as a person's label, and an
 estimate is reported as an unverified estimate.
@@ -22,6 +23,7 @@ NET_Y_M = 6.70
 IMAGE_JUMP_PX = 200.0       # centre jumps larger than this between two observations are tracker jumps
 IMAGE_MAX_GAP_FRAMES = 5    # observations further apart than this do not join a path
 PLAYERS = ("P1", "P2")
+DOUBLES_PLAYERS = ("P1", "P2", "P3", "P4")
 
 
 def _zone(y: float) -> str:
@@ -33,16 +35,21 @@ def _zone(y: float) -> str:
     return "back_court"
 
 
-def _image_paths(tracks_doc: Mapping, fps: float) -> dict[str, dict]:
+def players_of(match_doc: Mapping) -> tuple[str, ...]:
+    """The logical identities of this analysis: P1 and P2 in singles, P1 to P4 in doubles."""
+    return DOUBLES_PLAYERS if match_doc.get("mode") == "doubles" else PLAYERS
+
+
+def _image_paths(tracks_doc: Mapping, fps: float, players: Sequence[str] = PLAYERS) -> dict[str, dict]:
     """Per player: image-space path length (px) and number of observations, from this job's tracks only."""
-    out: dict[str, dict] = {player: {"path_px": 0.0, "observations": 0, "jumps_skipped": 0} for player in PLAYERS}
+    out: dict[str, dict] = {player: {"path_px": 0.0, "observations": 0, "jumps_skipped": 0} for player in players}
     for track in tracks_doc.get("tracks", []):
         for obs in track.get("observations", []):
             identity = obs.get("identity")
             if identity not in out:
                 continue
             out[identity]["observations"] += 1
-    grouped: dict[str, list[tuple[int, float, float]]] = {player: [] for player in PLAYERS}
+    grouped: dict[str, list[tuple[int, float, float]]] = {player: [] for player in players}
     for track in tracks_doc.get("tracks", []):
         for obs in track.get("observations", []):
             identity = obs.get("identity")
@@ -62,7 +69,7 @@ def _image_paths(tracks_doc: Mapping, fps: float) -> dict[str, dict]:
                 out[player]["jumps_skipped"] += 1
                 continue
             out[player]["path_px"] += step
-    for player in PLAYERS:
+    for player in players:
         out[player]["path_px"] = round(out[player]["path_px"], 1)
     return out
 
@@ -84,12 +91,13 @@ def _zone_shares(series: Sequence[Sequence]) -> dict[str, Optional[float]]:
 def build(*, job_id: str, match_doc: Mapping, records: Sequence[Mapping], tracks_doc: Optional[Mapping],
           results: Mapping, fps: float) -> dict:
     calibrated = match_doc.get("court", {}).get("status") == "calibrated"
-    image = _image_paths(tracks_doc or {}, fps)
+    players = players_of(match_doc)
+    image = _image_paths(tracks_doc or {}, fps, players)
     players_block = (match_doc.get("summary", {}) or {}).get("players", {}) or {}
     positions = (match_doc.get("positions", {}) or {}).get("series", {}) or {}
 
     per_player: dict[str, dict] = {}
-    for player in PLAYERS:
+    for player in players:
         player_shots = [r for r in records if r.get("player") == player]
         labels: dict[str, int] = {cls: 0 for cls in R.CLASSES}
         manual: dict[str, int] = {}
@@ -127,21 +135,23 @@ def build(*, job_id: str, match_doc: Mapping, records: Sequence[Mapping], tracks
             },
         }
 
-    if calibrated and all(per_player[p]["movement"]["court_distance_m"] is not None for p in PLAYERS):
-        values = {p: per_player[p]["movement"]["court_distance_m"] for p in PLAYERS}
+    if calibrated and all(per_player[p]["movement"]["court_distance_m"] is not None for p in players):
+        values = {p: per_player[p]["movement"]["court_distance_m"] for p in players}
         metric, basis = "court_distance_m", "floor-plane metres (approximate)"
     else:
-        values = {p: per_player[p]["movement"]["image_path_px"] for p in PLAYERS}
+        values = {p: per_player[p]["movement"]["image_path_px"] for p in players}
         metric, basis = "image_path_px", "image pixels (court not calibrated)"
-    leader = max(PLAYERS, key=lambda p: (values[p] or 0.0, p == "P1"))
-    other = min(PLAYERS, key=lambda p: (values[p] or 0.0, p))
+    # Singles: P1 against P2. Doubles: the identity that moved most against the one that moved least.
+    leader = max(players, key=lambda p: (values[p] or 0.0, p == "P1"))
+    other = min(players, key=lambda p: (values[p] or 0.0, p))
     difference = None
     if values[leader] and values[other] is not None and values[other] > 0:
         difference = round((values[leader] - values[other]) / values[other] * 100, 1)
     movement = {
         "metric": metric,
         "basis": basis,
-        "values": {p: values[p] for p in PLAYERS},
+        "values": {p: values[p] for p in players},
+        "compared": [leader, other],
         "more_movement": leader if values[leader] and values[leader] != values[other] else None,
         "difference_percent": difference,
         "note": "Movement is a measured quantity. It says nothing about shot quality.",
@@ -195,7 +205,7 @@ def build(*, job_id: str, match_doc: Mapping, records: Sequence[Mapping], tracks
         "source": {
             "name": results.get("source", {}).get("name") if isinstance(results.get("source"), dict) else None,
             "fps": fps,
-            "frames": (results.get("video") or {}).get("frames"),
+            "frames": (results.get("video") or {}).get("frames") or (results.get("video") or {}).get("frames_analysed"),
             "duration_s": (results.get("video") or {}).get("duration_s"),
             "court_status": match_doc.get("court", {}).get("status"),
             "court_template": match_doc.get("court", {}).get("template"),

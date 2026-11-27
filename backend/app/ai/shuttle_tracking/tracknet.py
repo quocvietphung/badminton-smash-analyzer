@@ -195,7 +195,8 @@ class NonOverlappingShuttleTracker:
 class TrackNetV3Model:
     """ONNX Runtime wrapper for the exported TrackNet model."""
 
-    def __init__(self, model_dir: str, threads: int = 4) -> None:
+    def __init__(self, model_dir: str, threads: int = 4, precision: str = "fp32") -> None:
+        from app.ai import precision as P
         from app.ai.runtime import session_options
 
         sidecar_path = os.path.join(model_dir, "tracknetv3_export.json")
@@ -206,12 +207,13 @@ class TrackNetV3Model:
         self.input_channels = int(sidecar["input_channels"])
         self.onnx_sha256 = str(sidecar["onnx_sha256"])
         self.checkpoint_sha256 = str(sidecar["checkpoint_sha256"])
-        self.file_name = str(sidecar["file"])
+        # FP32 by default; INT8 only when asked for and only a file quantized from this FP32 model (app/ai/precision.py).
+        path, self.int8_record = P.resolve(os.path.join(model_dir, sidecar["file"]), precision)
+        self.precision = precision
+        self.file_name = os.path.basename(path)
         import onnxruntime as ort
 
-        self._session = ort.InferenceSession(
-            os.path.join(model_dir, sidecar["file"]), sess_options=session_options(threads), providers=["CPUExecutionProvider"]
-        )
+        self._session = ort.InferenceSession(path, sess_options=session_options(threads), providers=["CPUExecutionProvider"])
         self._input_name = sidecar["input_name"]
 
     @property

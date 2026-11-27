@@ -14,7 +14,7 @@ import traceback
 from typing import Callable, Optional
 
 from app.config import Settings
-from app.pipeline.media import MediaError
+from app.pipeline.media import MediaError, probe_video
 from app.pipeline.runner import AnalysisRunner, PipelineOptions
 from app.analytics import trajectory_rules as R
 from app.services import match_document
@@ -71,10 +71,13 @@ class AnalysisWorker(threading.Thread):
             return
 
         self._store.mark_running(job_id, attempts=dequeue_count)
+        timeout_s = self._settings.job_timeout_for(clip_duration_s(job.input_path))
         options = PipelineOptions(
             models_dir=self._settings.models_dir,
             threads=self._settings.onnx_threads,
-            deadline=time.monotonic() + self._settings.job_timeout_s,
+            deadline=time.monotonic() + timeout_s,
+            timeout_s=timeout_s,
+            precision=self._settings.onnx_precision,
             input_dir=self._settings.input_dir,
         )
 
@@ -105,6 +108,15 @@ class AnalysisWorker(threading.Thread):
                 self.processed += 1
         finally:
             self._queue.delete(job_id)
+
+
+def clip_duration_s(path: str) -> Optional[float]:
+    """The clip length in seconds, or None when the file cannot be read (the runner then reports the real error)."""
+    try:
+        duration = probe_video(path).duration_s
+    except Exception:  # an unreadable file fails in the runner with its own message
+        return None
+    return duration if duration and duration > 0 else None
 
 
 def _source_payload(job) -> dict:

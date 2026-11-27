@@ -216,7 +216,7 @@ export function CorrectionPanel(props: CorrectionPanelProps) {
         </div>
       </div>
 
-      <div className={styles.correctionBlock}>
+      <div className={styles.correctionBlock} id="court-calibration">
         <h5 className={styles.subTitle}>{copy.calibrateTitle}</h5>
         <p className={styles.muted}>{copy.calibrateHelp}</p>
         <p className={styles.muted}>{fill(copy.calibrateClicks, { count: props.pendingCorners.length })}</p>

@@ -86,19 +86,24 @@ def session_corrections(store, job, *, include_pending: bool = False) -> Optiona
 
 def assemble(store, job, trajectory: Optional[dict] = None, *, include_pending_session_corrections: bool = False,
              track: Optional[O.ObservedTrack] = None, estimated_3d: Optional[dict] = None,
-             compute_estimated_3d: bool = True) -> dict:
-    """The match document of this job. trajectory maps a contact frame to its dataset record, or is None."""
+             compute_estimated_3d: bool = True, raw_only: bool = False) -> dict:
+    """The match document of this job. trajectory maps a contact frame to its dataset record, or is None.
+
+    raw_only leaves out every manual correction (this job's and the session's): the document then shows the AI output
+    alone. The golden regression snapshots use it, so a person's later review never changes a snapshot.
+    """
     return build_match_document(
         job_id=job.id,
         results=_read_results(job.output_dir),
         tracks_doc=_optional_json(job.output_dir, "player_tracks.json"),
         shuttle_doc=_optional_json(job.output_dir, "shuttle_trajectory.json"),
         rallies_doc=_optional_json(job.output_dir, "rallies.json"),
-        corrections=corrections_service.load(job.output_dir).get("entries", []),
+        corrections=[] if raw_only else corrections_service.load(job.output_dir).get("entries", []),
         metrics=_optional_json(job.output_dir, "metrics.json"),
         model_execution=_optional_json(job.output_dir, "model_execution.json"),
         court_doc=_optional_json(job.output_dir, "court_coordinates.json"),
-        session_corrections=session_corrections(store, job, include_pending=include_pending_session_corrections),
+        session_corrections=None if raw_only else session_corrections(
+            store, job, include_pending=include_pending_session_corrections),
         trajectory=trajectory,
         estimated_3d=estimated_3d,
         track=track if track is not None else observed_track(job),
@@ -261,26 +266,32 @@ def _write_json(path: str, payload: dict) -> None:
     os.replace(path + ".tmp", path)
 
 
-def coach_dataset_for(store, job) -> dict:
-    """The coach-dataset/v1 document of this job, built from this job's files only. Also written under derived/."""
+def coach_dataset_document(store, job, *, raw_only: bool = False, estimated_3d: Optional[dict] = None) -> dict:
+    """The coach-dataset/v1 document of this job, built from this job's files only. Nothing is written."""
     from app.services import coach_dataset
 
     track = observed_track(job)
-    stored_3d = _stored_estimated_3d(job, track)
-    doc = assemble(store, job, None, track=track, compute_estimated_3d=False)
+    stored_3d = estimated_3d if estimated_3d is not None else _stored_estimated_3d(job, track)
+    doc = assemble(store, job, None, track=track, compute_estimated_3d=False, raw_only=raw_only)
     results = _read_results(job.output_dir)
     video = results.get("video", {})
     shuttle_doc = _shuttle_or_empty(job)
     records, _meta = shot_dataset.build_records(doc, shuttle_doc, job_id=job.id, run_id="live", video=video, track=track)
     fps = float(video.get("fps") or shuttle_doc.get("fps") or doc.get("fps") or 30.0)
-    dataset = coach_dataset.build(
+    return coach_dataset.build(
         job_id=job.id,
-        match_doc=assemble(store, job, shot_dataset.by_frame(records), track=track, estimated_3d=stored_3d),
+        match_doc=assemble(store, job, shot_dataset.by_frame(records), track=track, estimated_3d=stored_3d,
+                           raw_only=raw_only),
         records=records,
         tracks_doc=_optional_json(job.output_dir, "player_tracks.json"),
         results=results,
         fps=fps,
     )
+
+
+def coach_dataset_for(store, job) -> dict:
+    """The coach-dataset/v1 document of this job, built from this job's files only. Also written under derived/."""
+    dataset = coach_dataset_document(store, job)
     target = os.path.join(job.output_dir, "derived")
     os.makedirs(target, exist_ok=True)
     with open(os.path.join(target, "coach_dataset.json"), "w", encoding="utf-8") as handle:

@@ -15,6 +15,7 @@ import AnalysisChatbot from "@/components/analysis-chatbot";
 import LocalAiLab from "@/components/local-ai-lab";
 import { SiteGate } from "@/components/site-gate";
 import SessionLibrary from "@/components/session-library";
+import { writeStoredJobId } from "@/lib/local-ai/client";
 import type {
   StudioLanguage,
   StudioTheme,
@@ -149,6 +150,7 @@ export default function StudioShell() {
   }, []);
 
   const openJob = useCallback((jobId: string) => {
+    writeStoredJobId(typeof window !== "undefined" ? window.localStorage : null, jobId);
     setSelectedJobId(jobId);
     navigate("analysis");
   }, [navigate]);

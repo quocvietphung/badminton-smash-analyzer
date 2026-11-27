@@ -1,0 +1,186 @@
+{
+ "schema": "smashlab.golden-analysis/v1",
+ "job_id": "c7efe6f969894bcb8c5257cf1d064b6b",
+ "video": {
+  "fps": 30.0,
+  "width": 1920,
+  "height": 1080,
+  "frames": 450
+ },
+ "observed_2d": {
+  "version": "observed-2d/v1",
+  "detected": 385,
+  "interpolated": 16,
+  "rejected": {
+   "missing_coordinates": 0,
+   "outside_frame": 0,
+   "low_confidence": 0,
+   "tracker_jump": 4
+  },
+  "invalid_steps": 1,
+  "segments": 4,
+  "frames_without_position": 45
+ },
+ "contacts": [
+  [
+   93,
+   "P2",
+   "candidate",
+   "clear",
+   1048.6
+  ],
+  [
+   117,
+   "P1",
+   "candidate",
+   "clear",
+   473.5
+  ],
+  [
+   151,
+   "P2",
+   "candidate",
+   "clear",
+   1649.5
+  ],
+  [
+   178,
+   "P1",
+   "candidate",
+   "clear",
+   165.6
+  ],
+  [
+   203,
+   "P2",
+   "candidate",
+   "clear",
+   1240.5
+  ],
+  [
+   257,
+   "P2",
+   "candidate",
+   "clear",
+   1051.5
+  ],
+  [
+   284,
+   "P1",
+   "candidate",
+   "lift",
+   549.8
+  ],
+  [
+   326,
+   "P2",
+   "candidate",
+   "clear",
+   1356.3
+  ],
+  [
+   373,
+   "P2",
+   "candidate",
+   "clear",
+   635.4
+  ],
+  [
+   443,
+   "P2",
+   "candidate",
+   "net_shot",
+   598.4
+  ]
+ ],
+ "review": {
+  "needs_review": 10
+ },
+ "rallies": [
+  [
+   78,
+   458
+  ]
+ ],
+ "dashboard": {
+  "players": {
+   "P1": {
+    "contacts": 3,
+    "distance": 26.42,
+    "distance_unit": "m",
+    "official_max_px_per_s": null,
+    "most_frequent_estimate": "clear"
+   },
+   "P2": {
+    "contacts": 7,
+    "distance": 26.51,
+    "distance_unit": "m",
+    "official_max_px_per_s": null,
+    "most_frequent_estimate": "clear"
+   }
+  },
+  "speed_panel": {
+   "official_count": 0,
+   "official_mean_px_per_s": null,
+   "official_max_px_per_s": null,
+   "candidate_count": 10,
+   "candidate_mean_px_per_s": 876.9,
+   "rally_mean_duration_s": 12.67,
+   "shot_interval_mean_s": 1.296
+  }
+ },
+ "estimated_3d": {
+  "available": 0,
+  "rejected": 10,
+  "reasons": {
+   "contact_not_confirmed": 10,
+   "insufficient_3d_camera_calibration": 10,
+   "interpolation_dominates": 1,
+   "too_few_reliable_observations": 1
+  }
+ },
+ "coach": {
+  "movement": {
+   "metric": "court_distance_m",
+   "values": {
+    "P1": 26.42,
+    "P2": 26.51
+   },
+   "more_movement": "P2",
+   "difference_percent": 0.3,
+   "compared": [
+    "P2",
+    "P1"
+   ]
+  },
+  "shot_counts": {
+   "rows": 10,
+   "accepted_by_gate": 0,
+   "needs_review": 10,
+   "person_labelled": 0
+  }
+ },
+ "court": {
+  "status": "calibrated",
+  "score": 0.8917,
+  "coverage": 1.0
+ },
+ "identity": {
+  "tracks_total": 4,
+  "tracks_per_identity": {
+   "P1": 2,
+   "P2": 2
+  },
+  "track_switches": {
+   "P1": 1,
+   "P2": 1
+  },
+  "coverage": {
+   "P1": 0.9511,
+   "P2": 0.9711
+  },
+  "events": {
+   "identity_initialised": 2
+  }
+ }
+}

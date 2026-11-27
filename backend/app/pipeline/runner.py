@@ -26,7 +26,9 @@ from typing import Callable, Iterator, Optional
 import cv2
 import numpy as np
 
+from app.ai import precision as precision_files
 from app.ai.court_detection.court import CourtEstimate, estimate_court
+from app.physics.self_calibration import self_calibrate
 from app.ai.player_detection.yolox import YoloXPersonDetector
 from app.ai.shuttle_tracking.inpaint import InpaintNetModel, refine_trajectory
 from app.ai.shuttle_tracking.tracknet import (
@@ -93,6 +95,10 @@ class PipelineOptions:
     crf: int = 23
     preset: str = "veryfast"
     deadline: Optional[float] = None
+    # The time limit behind the deadline, in seconds (Settings.job_timeout_for: grows with the clip length).
+    timeout_s: Optional[float] = None
+    # "fp32" (default) or "int8": quantized TrackNet and YOLOX made by tools/quantize_int8.py (app/ai/precision.py).
+    precision: str = "fp32"
     # Dataset folder (data/). Built-in samples take the audio of their raw source from its manifest.
     input_dir: Optional[str] = None
 
@@ -206,7 +212,8 @@ class AnalysisRunner:
 
     def _check_deadline(self) -> None:
         if self.options.deadline is not None and time.monotonic() > self.options.deadline:
-            raise MediaError("timeout", "The analysis exceeded the configured job timeout.")
+            limit = f" of {self.options.timeout_s:.0f} s" if self.options.timeout_s else ""
+            raise MediaError("timeout", f"The analysis exceeded its time limit{limit} for this clip length.")
 
     @contextmanager
     def _stage(self, name: str, start: float, end: float) -> Iterator[None]:
@@ -292,8 +299,11 @@ class AnalysisRunner:
         _write_shuttle_trajectory(output_dir, job_id, info, refined, presentation_timestamps_s)
 
         model_info = {
-            "tracknet_onnx_sha256": models["tracknet"].onnx_sha256,
+            "precision": self.options.precision,
+            "tracknet_file": models["tracknet"].file_name,
+            "tracknet_onnx_sha256": (models["tracknet"].int8_record or {}).get("int8_sha256") or models["tracknet"].onnx_sha256,
             "tracknet_checkpoint_sha256": models["tracknet"].checkpoint_sha256,
+            "yolox_file": models["yolox_file"],
             "yolox_sha256": models["yolox_sha256"],
             "inpaint_available": inpaint is not None,
             "inpaint_applied": inpaint_applied,
@@ -493,11 +503,16 @@ class AnalysisRunner:
         tracknet_sidecar = os.path.join(tracknet_dir, "tracknetv3_export.json")
         if not os.path.isfile(tracknet_sidecar):
             raise MediaError("model_missing", f"TrackNetV3 export metadata not found: {tracknet_sidecar}")
+        try:
+            tracknet = TrackNetV3Model(tracknet_dir, threads=opts.threads, precision=opts.precision)
+            detector_path, _record = precision_files.resolve(yolox_path, opts.precision)
+        except (FileNotFoundError, ValueError) as exc:
+            raise MediaError("model_missing", f"{opts.precision.upper()} models are not ready: {exc}") from exc
         models: dict = {
-            "tracknet": TrackNetV3Model(tracknet_dir, threads=opts.threads),
-            "detector": YoloXPersonDetector(yolox_path, conf_threshold=opts.detector_conf, threads=opts.threads),
-            "yolox_sha256": _sha256(yolox_path),
-            "yolox_file": os.path.basename(yolox_path),
+            "tracknet": tracknet,
+            "detector": YoloXPersonDetector(detector_path, conf_threshold=opts.detector_conf, threads=opts.threads),
+            "yolox_sha256": _sha256(detector_path),
+            "yolox_file": os.path.basename(detector_path),
         }
         inpaint_path = os.path.join(tracknet_dir, "tracknetv3_inpaintnet.onnx")
         with open(tracknet_sidecar, encoding="utf-8") as handle:
@@ -513,7 +528,18 @@ class AnalysisRunner:
         if not calibration_frames:
             return CourtEstimate("failed", "no full-resolution frames were available for calibration")
         background = uint8_median(calibration_frames)
-        return estimate_court(background)
+        estimate = estimate_court(background)
+        if estimate.calibrated and estimate.homography_image_from_court is not None:
+            # Camera from the court lines, checked against the net tape (court-self-calibration/v1). Only a camera that
+            # passes is used, and only for "Estimated 3D — monocular experimental" with all of its own gates.
+            height, width = background.shape[:2]
+            try:
+                estimate.extra["camera_3d"] = self_calibrate(estimate.homography_image_from_court, background, width, height)
+            except Exception as exc:  # a diagnostic must never fail the analysis
+                logger.warning("camera self-calibration failed: %s", exc)
+                estimate.extra["camera_3d"] = {"status": "failed", "source": "court_lines_and_net_tape", "independent_3d": False,
+                                               "reason": f"self-calibration error: {exc}"}
+        return estimate
 
 
 def _court_block(court: CourtInfo, court_auto: dict) -> dict:
@@ -531,6 +557,8 @@ def _court_block(court: CourtInfo, court_auto: dict) -> dict:
         ),
         "coordinate_space": court_auto.get("coordinate_space"),
         "approximation": court_auto.get("approximation"),
+        # The automatic camera and its checks; absent for a person's four corners (no background image at recompute).
+        "camera_3d": court_auto.get("camera_3d") if automatic else None,
     }
 
 
@@ -810,10 +838,12 @@ def _write_inference_report(output_dir, job_id, options: PipelineOptions, model_
         "pipeline_version": PIPELINE_VERSION,
         "device": "cpu",
         "threads": options.threads,
+        "job_timeout_s": options.timeout_s,
+        "precision": model_info.get("precision", "fp32"),
         "models": [
             {
                 "name": "TrackNetV3 TrackNet",
-                "file": "tracknetv3_tracknet.onnx",
+                "file": model_info.get("tracknet_file", "tracknetv3_tracknet.onnx"),
                 "onnx_sha256": model_info["tracknet_onnx_sha256"],
                 "checkpoint_sha256": model_info["tracknet_checkpoint_sha256"],
                 "licence": "MIT (qaz812345/TrackNetV3, code and checkpoints)",
@@ -828,7 +858,7 @@ def _write_inference_report(output_dir, job_id, options: PipelineOptions, model_
             },
             {
                 "name": "YOLOX-s",
-                "file": "object_detection_yolox_2022nov.onnx",
+                "file": model_info.get("yolox_file", "object_detection_yolox_2022nov.onnx"),
                 "onnx_sha256": model_info["yolox_sha256"],
                 "licence": "Apache-2.0 (opencv/opencv_zoo model folder; YOLOX by Megvii)",
                 "task": "person detection (COCO class 0), raw boxes stored in raw/detections.jsonl",

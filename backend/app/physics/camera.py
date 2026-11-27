@@ -100,6 +100,10 @@ class CameraCalibration:
 def camera_from_document(court_doc: Optional[dict], width: int, height: int) -> tuple[Optional[CameraCalibration], dict]:
     """Load an explicit camera model and return a diagnostic for weaker inputs."""
     block = (court_doc or {}).get("camera_3d")
+    if isinstance(block, dict) and "intrinsic" not in block:
+        # A self-calibration that stopped before it had a camera (court-self-calibration/v1) keeps only its reason.
+        return None, {"valid": False, "source": str(block.get("source") or "camera_3d"),
+                      "reason": str(block.get("reason") or "the camera_3d block holds no camera")}
     if isinstance(block, dict):
         try:
             camera = CameraCalibration(
@@ -176,23 +180,22 @@ def decompose_floor_homography(homography, width: int, height: int) -> Optional[
             column = h[:, index]
             columns.append(np.array([column[0] - cx * column[2], column[1] - cy * column[2], column[2]]))
         a, b = columns
-        estimates = []
-        denominator = a[2] * b[2]
-        numerator = a[0] * b[0] + a[1] * b[1]
-        if abs(denominator) > 1e-12:
-            value = -numerator / denominator
-            if value > 0:
-                estimates.append(value)
-        denominator = a[2] ** 2 - b[2] ** 2
-        numerator = a[0] ** 2 + a[1] ** 2 - b[0] ** 2 - b[1] ** 2
-        if abs(denominator) > 1e-12:
-            value = -numerator / denominator
-            if value > 0:
-                estimates.append(value)
-        if not estimates:
+        # Each constraint reads A / f^2 + B = 0 (orthogonal floor axes; equal axis lengths). They are solved together by
+        # least squares in 1/f^2. A constraint that the camera pose makes degenerate (a camera facing straight down the
+        # court reads 0 = 0 in the first one) has A and B near zero and so carries no weight; a median of the two
+        # separate solutions let that noise pick the focal length.
+        rows = [
+            (a[0] * b[0] + a[1] * b[1], a[2] * b[2]),
+            (a[0] ** 2 + a[1] ** 2 - b[0] ** 2 - b[1] ** 2, a[2] ** 2 - b[2] ** 2),
+        ]
+        weight = sum(coefficient * coefficient for coefficient, _ in rows)
+        inverse_square = -sum(coefficient * constant for coefficient, constant in rows) / weight if weight > 1e-18 else -1.0
+        if inverse_square <= 0:
             return {"solved": False, "reason": "the planar constraints do not yield a positive focal length"}
-        focal = float(np.sqrt(np.median(estimates)))
-        spread = float(np.ptp(np.sqrt(estimates)) / focal) if len(estimates) > 1 else None
+        focal = float(1.0 / np.sqrt(inverse_square))
+        estimates = [float(np.sqrt(-coefficient / constant)) for coefficient, constant in rows
+                     if coefficient * coefficient >= 0.05 * weight and abs(constant) > 1e-18 and -coefficient / constant > 0]
+        spread = float(np.ptp(estimates) / focal) if len(estimates) > 1 else None
         return {
             "solved": True,
             "assumed_principal_point_px": [round(cx, 3), round(cy, 3)],

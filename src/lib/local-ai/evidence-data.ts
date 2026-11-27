@@ -40,13 +40,14 @@ async function loadArtifact<T>(apiBase: string, jobId: string, name: LocalAiArti
   }
 }
 
-export async function loadEvidenceBundle(apiBase: string, jobId: string): Promise<EvidenceBundle> {
+/** courtCalibrated false skips court_coordinates.json: the backend writes it only for a calibrated court. */
+export async function loadEvidenceBundle(apiBase: string, jobId: string, options: { courtCalibrated?: boolean } = {}): Promise<EvidenceBundle> {
   const [tracks, events, rallies, shots, court, shuttle, corrections] = await Promise.all([
     loadArtifact<PlayerTracksFile>(apiBase, jobId, "player_tracks.json"),
     loadArtifact<IdentityEventsFile>(apiBase, jobId, "identity_events.json"),
     loadArtifact<RalliesFile>(apiBase, jobId, "rallies.json"),
     loadArtifact<ShotsFile>(apiBase, jobId, "shots.json"),
-    loadArtifact<CourtFile>(apiBase, jobId, "court_coordinates.json"),
+    options.courtCalibrated === false ? Promise.resolve(null) : loadArtifact<CourtFile>(apiBase, jobId, "court_coordinates.json"),
     loadArtifact<ShuttleFile>(apiBase, jobId, "shuttle_trajectory.json"),
     fetchJson<{ entries: CorrectionEntry[] }>(correctionsUrl(apiBase, jobId)).then(
       (body) => body.entries,

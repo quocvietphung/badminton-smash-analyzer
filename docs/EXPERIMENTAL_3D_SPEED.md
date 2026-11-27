@@ -55,6 +55,35 @@ góc tia tối thiểu 2°, reprojection ≤2 px, rồi làm mượt vật lý (
 có méo, lệch đồng hồ 2 ms và điểm nhiễu: sai số vị trí 3D < 2 cm, reprojection RMS < 0,5 px, tốc độ lệch < 1%.
 Sample A–D chỉ có một camera, nên không có camera thứ hai nào được giả lập.
 
+### Tự hiệu chỉnh camera từ sân (`backend/app/physics/self_calibration.py`, court-self-calibration/v1, 26-11-2026)
+
+- Mặt sàn: homography của vạch sân cho ra camera (xoay, vị trí, tiêu cự) với các giả định ghi rõ trong kết quả: điểm ảnh
+  vuông, không skew, tâm ảnh ở giữa khung, không méo ống kính. Sai số chiếu lại vạch sân được đo (`floor_reprojection_rms_px`).
+- Kiểm tra độc lập phía trên mặt sàn: mép trên của lưới cao 1,55 m ở cột và 1,524 m ở giữa (Luật Cầu lông BWF, Điều 1).
+  Camera dựng chỉ từ mặt sàn dự đoán vị trí băng lưới; băng lưới được dò trên ảnh nền trung vị (top-hat ngang, che các vạch
+  sơn đã biết, tâm băng theo trọng tâm độ sáng). Không có gì phía trên mặt sàn được dùng để dựng camera, nên khớp được là
+  một ràng buộc 3D độc lập.
+- Ngưỡng đặt trước (cho 1080 dòng, co giãn theo chiều cao ảnh): vạch sân ≤ 3 px; băng lưới tìm thấy ở ≥ 60% điểm mẫu, các
+  điểm nằm trên một đường cong trơn (lệch ≤ 2 px); sai lệch giữa dự đoán và băng lưới ≤ 3 px. Chỉ khi qua hết, `camera_3d`
+  mới có `independent_3d: true`, và vẫn chỉ dùng cho "Estimated 3D — monocular experimental" với mọi gate của bộ ước lượng
+  (contact phải được người xác nhận, v.v.). Ứng viên tự động vẫn bị từ chối trước khi fit.
+- Sửa lỗi kèm theo: `decompose_floor_homography` trước đây lấy trung vị của hai nghiệm tiêu cự riêng; khi camera nhìn thẳng
+  dọc sân, một ràng buộc suy biến (0 = 0) cho nghiệm nhiễu và kéo tiêu cự sai (1132 px thay vì 1600 px trên cảnh tổng hợp).
+  Nay giải bình phương tối thiểu theo 1/f², ràng buộc suy biến tự mất trọng số.
+- Tổng hợp (`backend/tests/test_self_calibration.py`): hai camera đã biết (1600 px và 1250 px) được khôi phục sai số < 1%,
+  sai lệch băng lưới 1,3 px và 1,1 px → validated; lưới vẽ thấp 20% hoặc không có lưới → bị từ chối.
+- Sample A và B (`backend/tools/self_calibrate_camera.py`, báo cáo trong `outputs/test-runs/20261126-150544-self-calibration/`):
+
+  | Sample | Vạch sân RMS | Băng lưới tìm thấy | Lệch băng lưới | Tiêu cự từ mặt sàn | Tiêu cự khớp lưới nhất | Kết quả |
+  |---|---|---|---|---|---|---|
+  | A | 0,018 px | 96% (lệch quanh đường cong 0,51 px) | **4,66 px** | 4190 px | 4714 px (lệch còn 0,71 px) | bị từ chối |
+  | B | 0,759 px | 96% (0,52 px) | **3,82 px** | 4212 px | 4654 px (0,76 px) | bị từ chối |
+
+  Camera từ mặt sàn đặt băng lưới gần đúng nhưng vượt ngưỡng 3 px. Tiêu cự dài hơn 11–12% thì khớp, cho thấy giả định
+  "tâm ảnh ở giữa khung" (hoặc độ zoom/cắt khung của bản phát sóng) không đúng với các clip này. Ngưỡng không được nới để
+  cho qua. Vì vậy A và B vẫn là `insufficient_3d_camera_calibration`; sample C và D không có sân được hiệu chỉnh nên
+  không chạy. Không có con số km/h mới nào.
+
 ## Kết luận
 
 - Bộ giải vật lý đã chạy thật trên quỹ đạo tổng hợp có ground truth ở 30, 60, 120 và 240 FPS.

@@ -9,6 +9,11 @@ import {
   getChatMaxOutputTokens,
 } from "@/lib/ai/azure-openai";
 import { getChatModel } from "@/lib/ai/chat-model";
+import {
+  CoachProviderError,
+  ollamaCoachResponse,
+  resolveCoachProvider,
+} from "@/lib/ai/coach-provider";
 import { buildAnalysisInstructions } from "@/lib/ai/analysis-instructions";
 import {
   buildRetrievalQuery,
@@ -44,6 +49,7 @@ const API_COPY: Record<StudioLanguage, {
   invalidRequest: string;
   notConfigured: string;
   connectionFailed: string;
+  signInExpired: string;
 }> = {
   en: {
     invalidOrigin: "Invalid request origin.",
@@ -54,6 +60,7 @@ const API_COPY: Record<StudioLanguage, {
     invalidRequest: "The chat or analysis data is invalid.",
     notConfigured: "The Azure AI Coach is not configured or is temporarily disabled.",
     connectionFailed: "Could not connect to the Azure AI Coach.",
+    signInExpired: "The AI Coach sign-in on this computer has expired. Refresh it and try again.",
   },
   de: {
     invalidOrigin: "Ungültiger Ursprung der Anfrage.",
@@ -64,6 +71,7 @@ const API_COPY: Record<StudioLanguage, {
     invalidRequest: "Die Chat- oder Analysedaten sind ungültig.",
     notConfigured: "Azure AI Coach ist nicht konfiguriert oder vorübergehend deaktiviert.",
     connectionFailed: "Die Verbindung zu Azure AI Coach konnte nicht hergestellt werden.",
+    signInExpired: "Die Anmeldung des AI Coach auf diesem Rechner ist abgelaufen. Bitte erneuern und erneut versuchen.",
   },
   vi: {
     invalidOrigin: "Nguồn yêu cầu không hợp lệ.",
@@ -74,6 +82,7 @@ const API_COPY: Record<StudioLanguage, {
     invalidRequest: "Dữ liệu trò chuyện hoặc phân tích không hợp lệ.",
     notConfigured: "Azure AI Coach chưa được cấu hình hoặc đang tạm tắt.",
     connectionFailed: "Không thể kết nối với Azure AI Coach.",
+    signInExpired: "Phiên đăng nhập AI Coach trên máy này đã hết hạn. Hãy làm mới rồi thử lại.",
   },
 };
 
@@ -150,10 +159,31 @@ export async function POST(request: Request) {
     }
     const retrievalQuery = buildRetrievalQuery(latestUserQuestion(messages), body.analysis);
     const knowledge = retrieveKnowledge(retrievalQuery);
+    const instructions = buildAnalysisInstructions(body.analysis, knowledge, body.language, body.coachDataset ?? null);
+
+    const provider = resolveCoachProvider(process.env);
+    if (provider.kind === "ollama") {
+      // A model on this computer, with the same instructions and derived data. Azure is not called in this mode.
+      if (process.env.AI_ASSISTANT_ENABLED === "false") {
+        return Response.json({ message: copy.aiUnavailable }, { status: 503 });
+      }
+      return ollamaCoachResponse({
+        provider,
+        instructions,
+        messages,
+        maxOutputTokens: getChatMaxOutputTokens(),
+        signal: request.signal,
+        headers: { "Cache-Control": "no-store", ...rateLimitHeaders(rateLimit) },
+        onError: (error) => {
+          console.error("SmashLab local AI chat failed", error);
+          return API_COPY[body.language].aiUnavailable;
+        },
+      });
+    }
 
     const result = streamText({
       model: await getChatModel(),
-      instructions: buildAnalysisInstructions(body.analysis, knowledge, body.language, body.coachDataset ?? null),
+      instructions,
       messages: await convertToModelMessages(messages),
       maxOutputTokens: getChatMaxOutputTokens(),
     });
@@ -162,6 +192,9 @@ export async function POST(request: Request) {
       headers: { "Cache-Control": "no-store", ...rateLimitHeaders(rateLimit) },
       onError: (error) => {
         console.error("SmashLab AI chat failed", error);
+        if (error instanceof AiConfigurationError && /expired/i.test(error.message)) {
+          return API_COPY[body.language].signInExpired;
+        }
         return API_COPY[body.language].aiUnavailable;
       },
     });
@@ -177,6 +210,10 @@ export async function POST(request: Request) {
     }
     if (error instanceof AiConfigurationError) {
       return Response.json({ message: copy.notConfigured }, { status: 503 });
+    }
+    if (error instanceof CoachProviderError) {
+      console.error("SmashLab AI provider settings are invalid:", error.message);
+      return Response.json({ message: copy.aiUnavailable }, { status: 503 });
     }
     console.error("SmashLab AI route failed", error);
     return Response.json({ message: copy.connectionFailed }, { status: 500 });

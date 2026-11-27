@@ -117,7 +117,14 @@ export type LocalAiHealth = {
   worker: { alive: boolean; processed: number };
   queue_depth: number;
   jobs: Record<LocalAiJobStatus, number>;
-  limits: { max_upload_mb: number; max_duration_s: number; job_timeout_s: number };
+  limits: {
+    max_upload_mb: number;
+    max_duration_s: number;
+    job_timeout_s: number;
+    job_overhead_s?: number;
+    job_seconds_per_video_s?: number;
+    job_timeout_longest_clip_s?: number;
+  };
 };
 
 export type LocalAiError = { code: string; message: string };

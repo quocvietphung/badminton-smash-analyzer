@@ -111,6 +111,9 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
                 "max_upload_mb": settings.max_upload_bytes // (1024 * 1024),
                 "max_duration_s": settings.max_duration_s,
                 "job_timeout_s": settings.job_timeout_s,
+                "job_overhead_s": settings.job_overhead_s,
+                "job_seconds_per_video_s": settings.job_seconds_per_video_s,
+                "job_timeout_longest_clip_s": settings.job_timeout_for(settings.max_duration_s),
             },
         }
 

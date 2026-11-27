@@ -194,7 +194,7 @@ export type VideoAnalysisResults = {
     step_px_per_frame_p95: number | null;
     units: string;
   };
-  court: { status: string; reason: string; template?: string; score?: number };
+  court: { status: string; reason: string; template?: string; score?: number | null; coverage?: number | null; source?: string | null };
   rally_segmentation: {
     status: string;
     reason: string;

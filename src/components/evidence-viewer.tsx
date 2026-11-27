@@ -79,7 +79,7 @@ export function EvidenceViewer({ apiBase, jobId, language, meta, revision, onCha
 
   useEffect(() => {
     let cancelled = false;
-    loadEvidenceBundle(apiBase, jobId).then(
+    loadEvidenceBundle(apiBase, jobId, { courtCalibrated: meta.courtStatus === "calibrated" }).then(
       (loaded) => {
         if (cancelled) return;
         setBundle(loaded);
@@ -92,7 +92,7 @@ export function EvidenceViewer({ apiBase, jobId, language, meta, revision, onCha
     return () => {
       cancelled = true;
     };
-  }, [apiBase, jobId, revision]);
+  }, [apiBase, jobId, revision, meta.courtStatus]);
 
   useEffect(() => {
     const video = sourceRef.current;

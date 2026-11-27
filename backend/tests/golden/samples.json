@@ -1,0 +1,10 @@
+{
+  "schema": "smashlab.golden-samples/v1",
+  "note": "One stored analysis per built-in sample, from the local end-to-end run of 2026-11-20 (outputs/test-runs/20261120-171034). Snapshots are recomputed from these jobs' files with tools/update_golden.py. They are regression baselines, not accuracy measurements: the clips have no ground truth.",
+  "samples": {
+    "A": {"job_id": "567e4196044f4f59a4f8a2e5d8fb83c0", "clip": "sample-a-singles-rally"},
+    "B": {"job_id": "c7efe6f969894bcb8c5257cf1d064b6b", "clip": "sample-b-fast-shuttle"},
+    "C": {"job_id": "b2e716b75db844229c9051e3f501bbe8", "clip": "sample-c-difficult-multicourt"},
+    "D": {"job_id": "71ab0bfea3554d1d81bacc2e7836be60", "clip": "sample-d-demonstration"}
+  }
+}

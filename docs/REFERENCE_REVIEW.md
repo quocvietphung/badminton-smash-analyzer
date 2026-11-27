@@ -44,3 +44,14 @@ Read from the repositories or papers listed. Code was read to understand the met
 | Own: contact detector v2 (`backend/app/analytics/match.py`, `detect_contacts`) | Own implementation. | Turn angle over ±3 detected frames, step thresholds, proximity to tracked player boxes, de-duplication by score, and a rejection reason for every rejected turn. The score is a heuristic blend and is labelled uncalibrated. | Automatic candidates are shown with their evidence and rejection reasons, and marked unvalidated. They are never treated as confirmed contacts. |
 | Own: heuristic shot types (`backend/app/analytics/shots.py`, model `heuristic-court-rules-v1`) | Own rules. Not a trained model; no weights. | Court-plane travel of the shuttle over 0.6 s after a contact. A short path ending near the net can be suggested as a net shot. Long travel is left unknown because one camera cannot safely separate clear from smash. | Labelled `heuristic_unvalidated`. Not a classifier, not a model, not measured accuracy. A person's label always overrides it. |
 | Own: image-motion HUD (`backend/app/analytics/match.py`) | Own implementation. | Average path length of detected, non-interpolated shuttle points around a contact divided by elapsed time. | Reported only as px/s with frame/time evidence. Automatic candidates may show a value on the timeline; only confirmed contacts enter headline and per-player maxima. Never presented as km/h. |
+
+## Decisions recorded 26 Nov 2026
+
+| Reference | Licence (checked) | Decision |
+|---|---|---|
+| CourtKeyNet (`Cracked-ANJ/CourtKeyNet` on Hugging Face; code `adithyanraj03/CourtKeyNet`) | MIT: the model-card tag and the repository LICENSE file | Not downloaded. The weights `pretrained/courtkeynet_base.safetensors` (4.98 MB) need PyTorch on the host to export ONNX. Waiting for the owner's approval. |
+| MediaPipe Pose Landmarker (`pose_landmarker_lite.task`, 5.8 MB from Google storage) and the `mediapipe` 1.2.3 package | Apache-2.0 for the package (PyPI metadata). The model file's licence is to be confirmed from its model card before any download. | Not downloaded. The package requires `opencv-contrib-python`, which conflicts with the pinned `opencv-python-headless`. Waiting for the owner's approval. |
+| Ultralytics YOLO models, used by some reviewed repositories | AGPL-3.0 | Not used. |
+| FreeTrack, shuttlesense, PenguinPush/goodminton | No licence file on GitHub | Not used. No code, weights or text copied. |
+| BADGE | MIT (per the earlier review) | Not used. The Coach data report is written without a language model (`src/lib/ai/coach-report.ts`). |
+| TrackNetV3 and YOLOX-s INT8 copies | Derived locally from the MIT TrackNetV3 and the Apache-2.0 YOLOX-s (opencv_zoo) models already on disk | Written by `backend/tools/quantize_int8.py`; nothing downloaded. FP32 stays the default. INT8 is opt-in and must agree with FP32 (`backend/tools/compare_precision.py`). |

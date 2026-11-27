@@ -13,7 +13,7 @@
     "test:tracker": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test tests/multi-pose-tracker.test.ts",
     "test:vision": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test tests/pose-lite-classifier.test.ts tests/pose-metrics.test.ts tests/motion-technique.test.ts tests/footwork-analysis.test.ts tests/multi-pose-tracker.test.ts tests/pose-appearance.test.ts tests/athlete-target-selection.test.ts",
     "test:rag": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test tests/rag-retrieval.test.ts",
-    "test:local-ai": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test tests/local-ai-client.test.ts tests/video-analysis-snapshot.test.ts tests/local-ai-evidence.test.ts tests/local-ai-workflow.test.ts tests/site-auth.test.ts tests/match-dashboard.test.ts tests/shot-trajectory.test.ts tests/ai-provider-label.test.ts"
+    "test:local-ai": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test tests/local-ai-client.test.ts tests/video-analysis-snapshot.test.ts tests/local-ai-evidence.test.ts tests/local-ai-workflow.test.ts tests/site-auth.test.ts tests/match-dashboard.test.ts tests/shot-trajectory.test.ts tests/ai-provider-label.test.ts tests/coach-report.test.ts tests/court-explanation.test.ts tests/coach-provider.test.ts"
   },
   "dependencies": {
     "@ai-sdk/azure": "^4.0.53",

@@ -46,7 +46,7 @@ Video stays inside the user's own Azure resource group during processing. The lo
 - Enqueue writes a message containing the job id. Job state is written before enqueue.
 - The worker receives a message with a visibility timeout (lease). If it crashes, the message reappears after the lease. The job then retries, up to `SMASHLAB_MAX_ATTEMPTS` (default 2).
 - The worker deletes the message only after the job state is terminal (`completed` or `failed`).
-- `job_timeout_s` (default 1200 s) is enforced inside the pipeline. The Container Apps Job `replicaTimeout` must be set above it (the draft uses 1800 s).
+- The job limit (`job_timeout_s` floor 1200 s, growing to 3900 s for a 120 s clip) is enforced inside the pipeline. The Container Apps Job `replicaTimeout` must be set above the longest limit (the draft's 1800 s is too short for long clips).
 
 ## 5. Cost estimate (inputs and method)
 

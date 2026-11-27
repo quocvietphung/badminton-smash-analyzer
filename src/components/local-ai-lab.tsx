@@ -47,6 +47,7 @@ import { StatisticsPanel } from "./statistics-panel";
 import { measuredRemainingSeconds } from "@/lib/local-ai/estimate";
 import { WORKFLOW_COPY } from "@/lib/local-ai/copy-workflow";
 import { sendVideo, type UploadSession } from "@/lib/local-ai/upload";
+import CourtCalibrationCard from "./court-calibration-card";
 import { SampleLibrary, type SampleMode } from "./sample-library";
 import styles from "./local-ai-lab.module.css";
 
@@ -100,9 +101,10 @@ type Results = {
   court: {
     status: string;
     reason: string;
+    source?: string | null;
     template?: string;
-    score?: number;
-    coverage?: number;
+    score?: number | null;
+    coverage?: number | null;
   };
   rally_segmentation: { status: string; reason: string };
   shot_classification: { status: string; reason: string };
@@ -185,9 +187,6 @@ const COPY = {
     video: "Annotated video",
     videoNote: "Boxes are person detections; the shuttle marker is a detection in image coordinates.",
     court: "Court calibration",
-    courtOk: "Calibrated: floor-plane metres are shown below.",
-    courtFailed: "Not calibrated. Only image-space values are reported.",
-    courtScore: "Fit score",
     heatmap: "Player occupancy (image space)",
     heatmapNote: "Share of confirmed foot points per cell. Not a tactical claim.",
     courtHeatmap: "Occupancy on the court plane",
@@ -303,9 +302,6 @@ const COPY = {
     video: "Video có chú thích",
     videoNote: "Khung là phát hiện người chơi; điểm cầu là phát hiện trong tọa độ ảnh.",
     court: "Hiệu chỉnh sân",
-    courtOk: "Đã hiệu chỉnh: số liệu mét trên mặt sân được hiển thị bên dưới.",
-    courtFailed: "Chưa hiệu chỉnh. Chỉ hiển thị số liệu trong không gian ảnh.",
-    courtScore: "Điểm khớp",
     heatmap: "Mật độ vị trí người chơi (không gian ảnh)",
     heatmapNote: "Tỉ lệ điểm chân được xác nhận trong mỗi ô. Không phải nhận định chiến thuật.",
     courtHeatmap: "Mật độ trên mặt sân",
@@ -421,9 +417,6 @@ const COPY = {
     video: "Annotiertes Video",
     videoNote: "Rahmen sind Personenerkennungen; der Federball-Marker ist eine Erkennung in Bildkoordinaten.",
     court: "Feldkalibrierung",
-    courtOk: "Kalibriert: Werte in Metern auf der Feldebene werden unten angezeigt.",
-    courtFailed: "Nicht kalibriert. Es werden nur Werte im Bildraum angezeigt.",
-    courtScore: "Passungswert",
     heatmap: "Spieler-Aufenthalt (Bildraum)",
     heatmapNote: "Anteil bestätigter Fußpunkte je Zelle. Keine taktische Aussage.",
     courtHeatmap: "Aufenthalt auf der Feldebene",
@@ -1001,22 +994,7 @@ export default function LocalAiLab({
                         <header className={styles.cardHeader}>
                           <strong>{copy.court}</strong>
                         </header>
-                        {results.court.status === "calibrated" ? (
-                          <p className={styles.good}>
-                            <CheckCircle2 aria-hidden="true" />
-                            {copy.courtOk}
-                          </p>
-                        ) : (
-                          <p className={styles.muted}>
-                            <AlertTriangle aria-hidden="true" />
-                            {copy.courtFailed} {results.court.reason}
-                          </p>
-                        )}
-                        {results.court.status === "calibrated" ? (
-                          <p className={styles.muted}>
-                            {copy.courtScore}: {Number(results.court.score ?? 0).toFixed(2)} · {results.court.template}
-                          </p>
-                        ) : null}
+                        <CourtCalibrationCard court={results.court} template={results.court.template} language={language} />
                       </article>
 
                       <article className={styles.card}>

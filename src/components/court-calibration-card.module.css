@@ -1,0 +1,81 @@
+.card { display: grid; gap: 10px; min-width: 0; }
+
+.good,
+.warn {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.good { color: var(--sl-accent); }
+.warn { color: var(--sl-warning); }
+.good svg,
+.warn svg { flex: 0 0 auto; width: 16px; height: 16px; }
+.template {
+  border: 1px solid var(--sl-border);
+  border-radius: 999px;
+  color: var(--sl-text-soft);
+  padding: 1px 8px;
+  font: 650 11px/1.6 var(--font-mono);
+}
+
+.stage { margin: 0; color: var(--sl-text-soft); font-size: 13px; line-height: 1.65; }
+.stage q { color: var(--sl-text); }
+
+.checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin: 0; }
+.checks div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border: 1px solid var(--sl-border);
+  border-left-width: 3px;
+  border-radius: 10px;
+  background: var(--sl-surface-soft);
+  padding: 8px 10px;
+}
+.checks dt { color: var(--sl-faint); font: 700 10px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+.checks dd { margin: 0; color: var(--sl-text-soft); font-size: 12px; line-height: 1.5; }
+.checks dd strong { color: var(--sl-text); font: 750 14px var(--font-mono); }
+.passed { border-left-color: var(--sl-accent) !important; }
+.failed { border-left-color: var(--sl-warning) !important; }
+.notReached { border-left-style: dashed !important; }
+
+.effect { margin: 0; color: var(--sl-muted); font-size: 12px; line-height: 1.6; }
+
+.guide {
+  border: 1px solid var(--sl-border-strong);
+  border-radius: 12px;
+  background: var(--sl-surface-soft);
+  padding: 0 12px;
+  color: var(--sl-text-soft);
+  font-size: 13px;
+}
+.guide summary {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 7px;
+  color: var(--sl-text);
+  font-weight: 750;
+  cursor: pointer;
+}
+.guide summary svg { width: 15px; height: 15px; color: var(--sl-accent); }
+.guide ol { display: grid; gap: 5px; margin: 0; padding-left: 20px; line-height: 1.6; }
+.guide p { margin: 8px 0; color: var(--sl-muted); font-size: 12px; line-height: 1.6; }
+.link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 12px;
+  color: var(--sl-accent);
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.link svg { width: 14px; height: 14px; }
+.guide summary:focus-visible,
+.link:focus-visible { outline: 2px solid var(--sl-accent); outline-offset: 3px; border-radius: 6px; }

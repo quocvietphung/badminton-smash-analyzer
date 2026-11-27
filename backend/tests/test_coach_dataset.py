@@ -68,3 +68,26 @@ def test_every_label_is_a_product_stroke_and_no_speed_is_kmh():
     assert all(s["estimate_label"] in R.CLASSES for s in doc["shots"])
     assert "kmh" not in json.dumps(doc).lower()  # the limitations text may say "never km/h"; no speed value is in km/h
     assert "unknown" not in json.dumps(doc["shots"])
+
+
+def test_doubles_reports_all_four_identities_and_compares_the_most_and_least_movement():
+    tracks = {"tracks": [
+        {"observations": [{"frame": i, "identity": identity, "x1": 100 + i * step, "y1": 100, "x2": 120 + i * step, "y2": 200}
+                          for i in range(10)]}
+        for identity, step in (("P1", 4), ("P2", 6), ("P3", 12), ("P4", 2))
+    ]}
+    match = {**_match(False, None, None), "mode": "doubles"}
+    records = [_record(10, "P3", "smash", 800.0), _record(40, "P4", "lift", 300.0)]
+    data = C.build(job_id="job-d", match_doc=match, records=records, tracks_doc=tracks, results={}, fps=30.0)
+    assert sorted(data["players"]) == ["P1", "P2", "P3", "P4"]
+    assert data["players"]["P3"]["contacts"] == 1 and data["players"]["P3"]["shot_estimates"]["smash"] == 1
+    movement = data["movement_comparison"]
+    assert movement["metric"] == "image_path_px" and sorted(movement["values"]) == ["P1", "P2", "P3", "P4"]
+    assert movement["compared"] == ["P3", "P4"] and movement["more_movement"] == "P3"
+    assert movement["difference_percent"] == round((12 * 9 - 2 * 9) / (2 * 9) * 100, 1)
+
+
+def test_singles_still_compares_p1_with_p2_only():
+    data = C.build(job_id="job-s", match_doc=_match(True, 27.55, 29.17), records=[], tracks_doc=_tracks(4, 6), results={}, fps=30.0)
+    assert sorted(data["players"]) == ["P1", "P2"]
+    assert data["movement_comparison"]["compared"] == ["P2", "P1"]

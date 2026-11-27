@@ -3,7 +3,7 @@
 import { AlertTriangle, Film, Loader2, MessageCircleMore, RefreshCw, RotateCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { publishAnalysisSnapshot } from "@/lib/analysis-session-store";
-import { apiUrl, fetchJson, LOCAL_AI_PROXY_BASE, LocalAiApiError } from "@/lib/local-ai/client";
+import { apiUrl, fetchJson, LOCAL_AI_PROXY_BASE, LocalAiApiError, writeStoredJobId } from "@/lib/local-ai/client";
 import type { StudioLanguage } from "@/lib/studio-types";
 import { buildVideoAnalysisSnapshot, type VideoAnalysisResults } from "@/lib/video-analysis";
 import { EvaluationDashboard } from "./evaluation-dashboard";
@@ -178,6 +178,8 @@ export default function SessionLibrary({ language, onOpenJob, onOpenCoach }: Ses
         sourceName: item.source.name,
         capturedAt: new Date(item.created_at * 1000).toISOString(),
       }));
+      // Remember the session, so the Coach still has its analysis after a page reload.
+      writeStoredJobId(typeof window !== "undefined" ? window.localStorage : null, item.job_id);
       onOpenCoach();
     } catch (caught) {
       setActionError(caught instanceof Error ? caught.message : copy.offline);

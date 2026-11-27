@@ -44,21 +44,42 @@ function walk(value: unknown, out: number[], depth = 0): void {
   }
 }
 
-/** Shares (0 to 1) also count as percentages, and the P1/P2 difference of each player value counts as known. */
-function derived(values: number[], players: Record<string, unknown> | null): number[] {
+const PLAYER_ID = /^P\d+$/;
+
+/** The players block of each analysis item that has one, keeping only identities such as P1 and P2. */
+function playerBlocks(items: unknown[]): Record<string, unknown>[] {
+  const blocks: Record<string, unknown>[] = [];
+  for (const item of items) {
+    const block = item && typeof item === "object" ? (item as { players?: unknown }).players : undefined;
+    if (!block || typeof block !== "object" || Array.isArray(block)) continue;
+    const players = Object.fromEntries(Object.entries(block as Record<string, unknown>).filter(([key]) => PLAYER_ID.test(key)));
+    if (Object.keys(players).length >= 2) blocks.push(players);
+  }
+  return blocks;
+}
+
+/**
+ * Shares (0 to 1) also count as percentages. For every pair of players (P1 with P2, and so on) the difference and the sum
+ * of each measured value count as known, so "29.17 - 27.55 = 1.62" is traced to the two values it comes from.
+ */
+function derived(values: number[], blocks: Record<string, unknown>[]): number[] {
   const out = [...values];
   for (const value of values) {
     if (value > 0 && value <= 1) out.push(value * 100);
   }
-  if (players) {
-    const [first, second] = Object.values(players);
-    const left: number[] = [];
-    const right: number[] = [];
-    walkPaired(first, second, left, right);
-    left.forEach((value, index) => {
-      out.push(Math.abs(value - right[index]));
-      out.push(value + right[index]);
-    });
+  for (const players of blocks) {
+    const ids = Object.keys(players);
+    for (let i = 0; i < ids.length; i += 1) {
+      for (let j = i + 1; j < ids.length; j += 1) {
+        const left: number[] = [];
+        const right: number[] = [];
+        walkPaired(players[ids[i]], players[ids[j]], left, right);
+        left.forEach((value, index) => {
+          out.push(Math.abs(value - right[index]));
+          out.push(value + right[index]);
+        });
+      }
+    }
   }
   return out;
 }
@@ -79,19 +100,13 @@ function walkPaired(a: unknown, b: unknown, left: number[], right: number[], dep
 
 /** Collects the numbers each source supplies. Analysis sources are JSON values; question and knowledge are text. */
 export function collectKnownNumbers(sources: { analysis?: unknown[]; question?: string[]; knowledge?: string[] }): KnownNumbers {
+  const items = sources.analysis ?? [];
   const analysis: number[] = [];
-  let players: Record<string, unknown> | null = null;
-  for (const item of sources.analysis ?? []) {
-    walk(item, analysis);
-    if (item && typeof item === "object" && "players" in (item as object)) {
-      const candidate = (item as { players?: unknown }).players;
-      if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) players = candidate as Record<string, unknown>;
-    }
-  }
+  for (const item of items) walk(item, analysis);
   const fromText = (texts: string[] | undefined) => (texts ?? []).flatMap((text) => numbersInText(text).flatMap((item) => item.values));
   return {
     values: new Map<NumberSource, number[]>([
-      ["analysis", derived(analysis, players)],
+      ["analysis", derived(analysis, playerBlocks(items))],
       ["question", fromText(sources.question)],
       ["knowledge", fromText(sources.knowledge)],
     ]),

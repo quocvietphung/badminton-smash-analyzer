@@ -130,3 +130,22 @@ test("an answer without numbers is reported as empty, not as checked", () => {
   assert.equal(result.status, "empty");
   assert.equal(result.checked, 0);
 });
+
+test("a difference between two players in the dataset is traced, though the snapshot has its own players block", () => {
+  // The chat sends [coachDataset, snapshot]. The snapshot's players block holds counts, not P1 and P2, and must not hide
+  // the dataset's pair: 29.17 - 27.55 = 1.62 is known from the two values it comes from.
+  const snapshotLike = { players: { tracksConfirmed: 3, tracksInMovementStatistics: 2, meanDetectionScore: 0.91 } };
+  const known = collectKnownNumbers({ analysis: [sampleA(), snapshotLike] });
+  const answer = "Player P2 covered approximately 1.62 more metres than Player P1. This is calculated by subtracting " +
+    "P1's distance of 27.55 metres from P2's distance of 29.17 metres.";
+  const result = checkAnswerNumbers(answer, known);
+  assert.equal(result.status, "ok", JSON.stringify(result.unmatched));
+  assert.equal(result.matched, 3);
+  const wrong = checkAnswerNumbers("Player P2 covered 1.63 more metres than Player P1.", known);
+  assert.deepEqual(wrong.unmatched.map((item) => item.text), ["1.63"]);
+});
+
+test("every pair of players counts, not only the first two", () => {
+  const known = collectKnownNumbers({ analysis: [{ players: { P1: { court_m: 20 }, P2: { court_m: 25 }, P3: { court_m: 30 } } }] });
+  assert.equal(checkAnswerNumbers("P3 covered 10 m more than P1.", known).status, "ok");
+});

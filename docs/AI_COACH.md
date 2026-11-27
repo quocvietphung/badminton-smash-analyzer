@@ -23,7 +23,7 @@ brand header, two tabs and a composer dock. The same conversation is shared by t
 ## Number check
 
 After each answer, `src/lib/ai/number-check.ts` looks up every number of the answer in the analysis data (the coach
-dataset and the snapshot, including shares as percentages and the P1/P2 differences), in the question, and in the
+dataset and the snapshot, including shares as percentages and the difference and sum of each pair of players, such as P1 and P2), in the question, and in the
 knowledge base. Rounding is accepted to the precision written. Counts from 0 to 3 and calendar years are not checked.
 
 - All found: a green chip, "N of M numbers found in the data".
@@ -32,11 +32,31 @@ knowledge base. Rounding is accepted to the precision written. Counts from 0 to 
 
 The check says a number exists in the data, not that the sentence around it is right.
 
+## Shuttle speed questions
+
+A question about the shuttle's speed in km/h or m/s, asked while the analysis has no physical speed, is answered from the
+data without the model (`src/lib/ai/physical-speed-answer.ts`). The answer has two sentences: the limit, the most frequent
+rejection reason, and whether a two-camera measurement exists. It gives no km/h or m/s value and names no candidate. In the
+browser check the model wrote three sentences and quoted a candidate speed in px/s, so this question no longer goes to the
+model. A question about a player's speed, or a unit with no subject, still goes to the model under the rule in
+`src/lib/ai/analysis-instructions.ts`.
+
+## Known limits
+
+- The payload carries two court-distance measures that do not agree. The coach dataset gives the identity-level distance
+  (sample A: P1 27.55 m, P2 29.17 m; `backend/app/analytics/match.py`). The snapshot gives a track-level court path (track 1:
+  58.787 m, track 2: 35.837 m; `backend/app/ai/analytics/movement.py`), and it does not say which track is P1 or P2. Not
+  reconciled yet.
+- A claim about a time, such as "at 12 seconds a contact was a candidate", is not checked. The number check matches the number
+  12 against any count in the data. Sample A has candidate contacts at 10.6 s and 13.3 s, and none at 12 s.
+- The model sometimes writes its arithmetic in LaTeX (for example `\text{m}`). The chat shows this as raw text. Not changed.
+
 ## Tests
 
 `tests/coach-report.test.ts` (in `npm run test:local-ai`): every value line has evidence, estimates are marked
 unverified, missing values are unavailable, decimal styles of EN/VI/DE answers are read, invented numbers and km/h are
-reported.
+reported. Differences between two players are traced to the two values they come from.
+`tests/physical-speed-answer.test.ts` covers the shuttle km/h answer: its two sentences, its reason and its gate.
 
 ## Model provider
 
@@ -91,8 +111,17 @@ tests only. Each needs an owner decision.
 
 ### Docker
 
-The Ollama server listens on 127.0.0.1 by default, which a container cannot reach. `npm run dev` on the Mac reaches it.
-Reaching it from the Docker web container needs Ollama to listen beyond loopback, a decision for the owner.
+Checked on 27 Nov 2026 with Docker Desktop for Mac: the web container reached the Ollama server at
+`http://host.docker.internal:11434` while Ollama listened only on `127.0.0.1:11434`. A request from inside the container
+returned version 0.40.18, so the bind address does not need to change. `docker-compose.yml` does not pass the Ollama variables.
+Set them in an override file outside the repository, then recreate the web container:
+
+```bash
+docker compose -p smashlab-ai -f docker-compose.yml -f <override.yml> up -d web
+```
+
+The override sets `SMASHLAB_COACH_PROVIDER=ollama`, `OLLAMA_BASE_URL=http://host.docker.internal:11434` and
+`OLLAMA_MODEL=qwen2.5-7b-8k`.
 
 ### Test
 

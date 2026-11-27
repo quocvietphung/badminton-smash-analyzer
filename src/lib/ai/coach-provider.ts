@@ -147,3 +147,17 @@ export function ollamaCoachResponse(options: {
   });
   return createUIMessageStreamResponse({ stream, headers: options.headers });
 }
+
+/** A fixed answer written by the app from the data, streamed in the same UI message format as a model answer. */
+export function coachTextResponse(options: { text: string; headers?: HeadersInit }): Response {
+  const stream = createUIMessageStream({
+    execute: ({ writer }) => {
+      writer.write({ type: "start" });
+      writer.write({ type: "text-start", id: ANSWER_ID });
+      writer.write({ type: "text-delta", id: ANSWER_ID, delta: options.text });
+      writer.write({ type: "text-end", id: ANSWER_ID });
+      writer.write({ type: "finish" });
+    },
+  });
+  return createUIMessageStreamResponse({ stream, headers: options.headers });
+}

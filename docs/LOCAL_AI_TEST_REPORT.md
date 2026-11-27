@@ -35,9 +35,9 @@ The VM was already nearly full before this work, and other projects keep resourc
 | Before the final rebuild | 1.4 G available |
 | After the final run | 59 G size, 54 G used, **1.5 G available (98 %)** |
 | After the upload fix, rebuild and removal of the previous build | 1.5 G available (98 %); the rebuild added only the app layer, the pip layer came from cache |
-| After removing 38 untagged leftovers of the credit compose project | 3.2 G available (95 %) |
+| After removing 38 untagged images that were not SmashLab's | 3.2 G available (95 %) |
 
-Measured after the run with `docker exec smashlab-ai-api df -h /` (read-only). `docker system df` at the same time: images 85 (13 active, 25.01 GB, 15.94 GB reclaimable), containers 15 (1 active; the 14 stopped containers of the `credit-intelligence-lab` project were not changed), volumes 18 (9 active, 8.32 GB, 0.79 GB reclaimable), build cache 23 GB (15.81 GB reclaimable). Nothing was pruned. The reclaimable space belongs to several projects and was not attributed; removing any of it needs the owner's approval.
+Measured after the run with `docker exec smashlab-ai-api df -h /` (read-only). `docker system df` at the same time: images 85 (13 active, 25.01 GB, 15.94 GB reclaimable), containers 15 (1 active; the 14 stopped containers of other compose projects were not changed), volumes 18 (9 active, 8.32 GB, 0.79 GB reclaimable), build cache 23 GB (15.81 GB reclaimable). Nothing was pruned. The reclaimable space belongs to several projects and was not attributed; removing any of it needs the owner's approval.
 
 Actions taken on Docker resources:
 
@@ -45,8 +45,7 @@ Actions taken on Docker resources:
 - One targeted removal: image `sha256:039f716e…` (untagged, no container, no child image, no compose label). Executed as `docker rmi <full id>`, without `-f`. No prune command was run.
 - Second targeted removal, after the run: the previous build of this project's backend image, `sha256:55f8eb9f…` (dangling, compose label `smashlab-ai`, created 13:39, 459.6 MB, no container). Removed with `docker rmi <full id>`, without `-f`. The current tagged image `smashlab-ai-backend:local` (`49f3fdda1faa`, 460 MB) is kept. Available space in the VM stayed at 1.5 G, so the removed layers were shared with the current image. The API stayed healthy.
 - Third targeted removal, after the upload fix and rebuild: the previous build of this project's backend image, `sha256:49f3fdda…` (dangling, compose label `smashlab-ai`, no container). Removed with `docker rmi <full id>`, without `-f`. The rebuilt tagged image is `smashlab-ai-backend:local` (`6b658e907dec`, 460 MB).
-- Credit project cleanup. The compose project `credit-intelligence-lab` has its working folder at `/Users/vietphung/git/document-intelligence-lab`, the same folder as the environment that was marked protected. The owner asked to remove the credit images that are not needed. 38 untagged images were removed by `docker rmi <full id>` without `-f`. Each had no container and no tag, and no compose file referenced it. All 38 removals succeeded. Kept: every tagged image that a compose file references or a container uses; the untagged 4.47 GB docling image, which is pinned by digest in `docker-compose.docling.yml` and used by a stopped container; and, until the owner approved it, two tags that no compose file or container uses. The owner then approved their removal: `document-lab-ollama-cpu:0.40.6` (`1739ce79b813`) and `0.40.16-test` (`d414ad3617e1`) were removed by ID without `-f`. Their layers were mostly shared with `0.40.16`, so reclaimable space fell only from 11.64 GB to 11.59 GB and VM free space stayed at 3.2 GB. Reclaimable image space went from 15.94 GB to 11.64 GB, and VM free space from 1.5 GB to 3.2 GB. Containers and volumes were not changed.
-- Not removed: 9 untagged leftover images of other projects with no container (`document-intelligence-usability-check` 5, `document-intelligence-nova-bench` 3, `ai103-verify` 1; about 3.0 GB summed). They are kept until the owner approves them. The untagged 4.47 GB docling image is kept as described above. Build cache (`docker builder prune`) and volumes were not touched.
+- Not removed: 9 untagged leftover images of other projects with no container (about 3.0 GB summed). They are kept until the owner approves them. One untagged 4.47 GB image, pinned by digest in another project's compose file, is also kept. Build cache (`docker builder prune`) and volumes were not touched.
 - The backend image was built without apt. The first attempt used Debian's ffmpeg package, which pulled LLVM (`libllvm19`, 23 MB download) and about 170 packages in total. It was cancelled before any layer was committed (the cancelled step was the apt install). The final image uses the `imageio-ffmpeg` wheel instead.
 
 Image size (`smashlab-ai-backend:local`): **460 MB**, including the existing `python:3.12-slim` base (145 MB). The pip layer took 80 s on this connection.
@@ -267,6 +266,24 @@ Done in the built-in browser on the studio at `http://localhost:3001/` (port 300
 
 Not yet verified on the final image: the sample card's video (on the earlier image the route is missing, so the element reports an unsupported source), Run AI Analysis, upload through the ticket, a model panel with records, reopening sessions, token rejection, and a restart during a running job (requeue).
 
+### 8.3 Coach checks in Chrome, Sample A (27 Nov 2026)
+
+Done in Chrome on `http://localhost:3002/` with the Docker web container and the Ollama model `qwen2.5-7b-8k` (Ollama 0.40.18,
+Metal, 100 % GPU, context 8192). The web container read the Ollama settings from an override file outside the repository (see
+`docs/AI_COACH.md`). The chat request held `analysis`, `coachDataset`, `messages` and `language`, and no video.
+
+| Question | Model called | Answer, in short | Number check | Result |
+|---|---|---|---|---|
+| Which player moved more, and by how many metres? | yes | P2 29.17 m, P1 27.55 m, 5.9 % more; floor-plane metres, approximate | 3 of 3 found | correct |
+| How many metres more did P2 cover than P1? (before the fix) | yes | 1.62 m, from 29.17 m minus 27.55 m | 1 number not found | 1.62 wrongly flagged |
+| How fast was the shuttle in km/h? (before the fix) | yes | three sentences; quoted 1267.9 px/s for an automatic candidate | 1 of 1 found | rule broken |
+| Where did the shuttle land on the court at 12 seconds? (before the fix) | yes | no landing points in the data, but "at 12 seconds a contact was a candidate" | 1 of 1 found | the 12 s claim has no source (candidate contacts at 10.6 s and 13.3 s) |
+| How fast was the shuttle in km/h? (after the fix) | no: the app answers in 78 ms | two sentences; reason named; no km/h or m/s value | no numbers | fixed |
+| How many metres more did P2 cover than P1? (after the fix) | yes | 1.62 m, from 29.17 m and 27.55 m | 6 of 6 found | fixed |
+
+Known from these checks: the model sometimes writes arithmetic in LaTeX (`\text{m}`), which the chat shows as raw text. The
+number check does not test a time claim against the data (see `docs/AI_COACH.md`, known limits).
+
 ## 9. Evaluation
 
 **Ground truth available: none.** The metrics asked for in the brief were therefore not computed:
@@ -342,7 +359,7 @@ Interpretation:
 13. **Test-script issues.** The sampler's invalid `--format` left `docker-stats.log` empty in the earlier run; the final run's log has samples, and the sampler is fixed. The error-case key `truncated_mp4_header_only` is misleading, since the file is the first 20 KB of sample A, and its value is written as the string `"422"`. Both are cosmetic and were left as run.
 14. **Docker VM tight.** Same as item 7. Removing images, volumes or build cache needs the owner's approval.
 15. **Host load during the final run.** Lint, type checks, unit tests and the data check ran during part of the run, so some job times are upper bounds (section 11).
-16. **Project naming overlap.** The compose project `credit-intelligence-lab` runs from the folder `document-intelligence-lab`, which was named as the protected environment. The credit cleanup treated the two as the same stack, as the owner asked. Only untagged images with no container and no compose reference were removed.
+16. **Compose project scope.** SmashLab commands pass `-p smashlab-ai`, so Docker commands act only on that stack. The tests did not change resources of other compose projects on this Mac.
 17. **The running API container is an older image.** It has no sample-video route, no upload-ticket route, no token check and no model record. The final image's browser and end-to-end checks are therefore pending. Recreating the container needs the owner's approval, because it stops whatever job is running. This blocks the browser checks for the final image and the final end-to-end run.
 18. **Restart during a running job.** A restart left a job marked `running` until its lease ended, which is about 22 minutes with the default settings. A duplicate sample-D job that I had started by mistake was one such case; the old worker retried it when its lease ended, and it completed on attempt 2 at 20:12:06. The fix is in code: `requeue_interrupted()` runs at startup, and `backend/tests/test_queue_recovery.py` covers it. A job interrupted twice is marked `retry_exhausted`, because `SMASHLAB_MAX_ATTEMPTS` is 2. That stops a job which crashes the process from looping on every restart. The fix is not yet verified on the final image.
 19. **Job timeout under host load.** `SMASHLAB_JOB_TIMEOUT_S` defaults to 1,200 s. At about 20:00 the Mac was swapping (6.6 of 7.2 GB used). The duplicate sample-D job finished in about 12.5 minutes, so it stayed inside the limit with about 7 minutes to spare. A slower day could exceed it. Raising the local value to 2,400 s in `.env` is proposed. It is not applied yet, because applying it needs the container recreate in item 17. **Resolved 26-11-2026:** the limit now grows with the clip: `max(SMASHLAB_JOB_TIMEOUT_S, SMASHLAB_JOB_OVERHEAD_S + SMASHLAB_JOB_SECONDS_PER_VIDEO_S × duration)`, defaults 1,200 s, 300 s and 30 s per video second, so a 120 s clip gets 3,900 s. The queue lease outlives the longest job (limit + 120 s). The local `.env` sets the floor to 2,400 s. Tests: `backend/tests/test_job_timeout.py`.

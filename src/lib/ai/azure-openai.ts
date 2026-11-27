@@ -25,8 +25,8 @@ function requiredEnvironmentValue(name: string) {
 }
 
 /**
- * Entra ID token for the Azure OpenAI resource, from the Azure CLI sign-in on this machine (the same sign-in the
- * Document Intelligence project uses). It is read on the server and never sent to the browser. Production needs an
+ * Entra ID token for the Azure OpenAI resource, from the Azure CLI sign-in on this machine. It is read on the server and
+ * never sent to the browser. Production needs an
  * API key or a managed identity instead.
  */
 async function entraToken(): Promise<string> {

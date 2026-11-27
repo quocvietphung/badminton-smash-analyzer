@@ -11,10 +11,12 @@ import {
 import { getChatModel } from "@/lib/ai/chat-model";
 import {
   CoachProviderError,
+  coachTextResponse,
   ollamaCoachResponse,
   resolveCoachProvider,
 } from "@/lib/ai/coach-provider";
 import { buildAnalysisInstructions } from "@/lib/ai/analysis-instructions";
+import { physicalSpeedFacts, physicalSpeedReply } from "@/lib/ai/physical-speed-answer";
 import {
   buildRetrievalQuery,
   retrieveKnowledge,
@@ -156,6 +158,21 @@ export async function POST(request: Request) {
     const messages = sanitizeMessages(body.messages);
     if (!messages.length) {
       return Response.json({ message: copy.emptyRequest }, { status: 400 });
+    }
+    // A shuttle km/h or m/s question while the analysis has no physical speed: the answer is written from the data,
+    // within the rule of two sentences, and the model is not called (physical-speed-answer.ts).
+    const physicalReply = physicalSpeedReply({
+      question: latestUserQuestion(messages),
+      analysisSelected: body.analysis.source !== "none",
+      status: body.analysis.physicalSpeed.status,
+      language: body.language,
+      facts: physicalSpeedFacts(body.coachDataset ?? null),
+    });
+    if (physicalReply !== null) {
+      return coachTextResponse({
+        text: physicalReply,
+        headers: { "Cache-Control": "no-store", ...rateLimitHeaders(rateLimit) },
+      });
     }
     const retrievalQuery = buildRetrievalQuery(latestUserQuestion(messages), body.analysis);
     const knowledge = retrieveKnowledge(retrievalQuery);

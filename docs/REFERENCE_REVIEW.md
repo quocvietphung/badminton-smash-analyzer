@@ -55,3 +55,10 @@ Read from the repositories or papers listed. Code was read to understand the met
 | FreeTrack, shuttlesense, PenguinPush/goodminton | No licence file on GitHub | Not used. No code, weights or text copied. |
 | BADGE | MIT (per the earlier review) | Not used. The Coach data report is written without a language model (`src/lib/ai/coach-report.ts`). |
 | TrackNetV3 and YOLOX-s INT8 copies | Derived locally from the MIT TrackNetV3 and the Apache-2.0 YOLOX-s (opencv_zoo) models already on disk | Written by `backend/tools/quantize_int8.py`; nothing downloaded. FP32 stays the default. INT8 is opt-in and must agree with FP32 (`backend/tools/compare_precision.py`). |
+
+## Reviewed for studio UI (28 Nov 2026, nightly)
+
+| Source | Licence (checked) | What was read | Decision |
+|---|---|---|---|
+| `yo-WASSUP/Good-Badminton` | Apache-2.0 (README states code and ball weights; RTMPose/YOLOX weights keep upstream Apache-2.0) | README only (page fetch; the repository was not attached to this session). Gradio UI with court correction, overlays, rally numbers, `detections.jsonl`. No timeline view and no tests mentioned. | Approach only. No code copied. Its YOLO weights are not used. |
+| `hobtech-0310/bad-match-annotator` | No LICENSE file found | README only. Frame stepping (1 and 5 frames), variable speed, shot list with jump and loop, JSON save/load. | Idea only (keyboard frame stepping). Nothing copied. SmashLab's `transportKeyAction` is its own code. |

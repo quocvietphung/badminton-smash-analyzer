@@ -156,6 +156,23 @@ export function timeAtFrame(frame: number, fps: number): number {
   return fps > 0 ? frame / fps : 0;
 }
 
+export type TransportKey = { kind: "step"; delta: number } | { kind: "toggle" } | { kind: "jump"; to: "start" | "end" };
+
+/**
+ * Maps a keyboard key to a transport action: arrows step one frame, Shift+arrow five frames,
+ * Space toggles play, Home/End jump to the first/last frame. Other keys and modified chords
+ * (Ctrl, Alt, Meta) return null so browser shortcuts keep working.
+ */
+export function transportKeyAction(key: string, modifiers: { shift?: boolean; ctrl?: boolean; alt?: boolean; meta?: boolean } = {}): TransportKey | null {
+  if (modifiers.ctrl || modifiers.alt || modifiers.meta) return null;
+  if (key === "ArrowLeft") return { kind: "step", delta: modifiers.shift ? -5 : -1 };
+  if (key === "ArrowRight") return { kind: "step", delta: modifiers.shift ? 5 : 1 };
+  if (key === " " || key === "Spacebar") return modifiers.shift ? null : { kind: "toggle" };
+  if (key === "Home") return { kind: "jump", to: "start" };
+  if (key === "End") return { kind: "jump", to: "end" };
+  return null;
+}
+
 /** "3.47 s · frame 104" for the readout under the videos. */
 export function formatFrameTime(frame: number, fps: number): string {
   return `${timeAtFrame(frame, fps).toFixed(2)} s · frame ${frame}`;

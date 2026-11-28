@@ -12,6 +12,7 @@ import {
   indexBoxesByFrame,
   intervalAround,
   markerEvents,
+  transportKeyAction,
   validateIdentityDraft,
   type IdentityEvent,
   type PlayerTrack,
@@ -121,4 +122,20 @@ test("only identity changes appear as timeline markers", () => {
     { id: "b", type: "identity", created_at: 2 },
     { id: "c", type: "mode", created_at: 3 },
   ]), { identity: 2, mode: 1 });
+});
+
+test("transportKeyAction maps arrows to one-frame and Shift to five-frame steps", () => {
+  assert.deepEqual(transportKeyAction("ArrowLeft"), { kind: "step", delta: -1 });
+  assert.deepEqual(transportKeyAction("ArrowRight"), { kind: "step", delta: 1 });
+  assert.deepEqual(transportKeyAction("ArrowLeft", { shift: true }), { kind: "step", delta: -5 });
+  assert.deepEqual(transportKeyAction("ArrowRight", { shift: true }), { kind: "step", delta: 5 });
+});
+
+test("transportKeyAction handles play, jump keys and ignores browser chords and other keys", () => {
+  assert.deepEqual(transportKeyAction(" "), { kind: "toggle" });
+  assert.deepEqual(transportKeyAction("Home"), { kind: "jump", to: "start" });
+  assert.deepEqual(transportKeyAction("End"), { kind: "jump", to: "end" });
+  assert.equal(transportKeyAction("ArrowLeft", { ctrl: true }), null);
+  assert.equal(transportKeyAction("ArrowRight", { meta: true }), null);
+  assert.equal(transportKeyAction("a"), null);
 });

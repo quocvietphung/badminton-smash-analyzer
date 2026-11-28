@@ -1,7 +1,7 @@
 "use client";
 
 import { Pause, Play, SkipBack, SkipForward } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { artifactUrl, formatSeconds, sourceVideoUrl } from "@/lib/local-ai/client";
 import { EVIDENCE_COPY } from "@/lib/local-ai/copy";
 import {
@@ -16,6 +16,7 @@ import {
   markerEvents,
   statusColour,
   timeAtFrame,
+  transportKeyAction,
   type IdentityEvent,
   type TrackBox,
 } from "@/lib/local-ai/evidence";
@@ -189,6 +190,25 @@ export function EvidenceViewer({ apiBase, jobId, language, meta, revision, onCha
     seekToFrame(currentFrame + delta);
   }
 
+  function onTransportKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const target = event.target as HTMLElement;
+    if (target.closest("input, textarea, select, button")) return;
+    const action = transportKeyAction(event.key, {
+      shift: event.shiftKey,
+      ctrl: event.ctrlKey,
+      alt: event.altKey,
+      meta: event.metaKey,
+    });
+    if (!action) return;
+    event.preventDefault();
+    if (action.kind === "step") stepFrames(action.delta);
+    else if (action.kind === "toggle") togglePlay();
+    else {
+      pauseBoth();
+      seekToFrame(action.to === "start" ? 0 : totalFrames - 1);
+    }
+  }
+
   function onSourceTimeUpdate() {
     const source = sourceRef.current;
     const annotated = annotatedRef.current;
@@ -285,7 +305,14 @@ export function EvidenceViewer({ apiBase, jobId, language, meta, revision, onCha
         </figure>
       </div>
 
-      <div className={styles.transport}>
+      <div
+        className={styles.transport}
+        tabIndex={0}
+        role="group"
+        aria-label={copy.keyboardHint}
+        onKeyDown={onTransportKeyDown}
+        title={copy.keyboardHint}
+      >
         <button type="button" className={styles.iconButton} onClick={() => stepFrames(-1)} aria-label="-1 frame">
           <SkipBack size={16} aria-hidden />
         </button>
@@ -297,6 +324,7 @@ export function EvidenceViewer({ apiBase, jobId, language, meta, revision, onCha
         </button>
         <span className={styles.readout}>{formatFrameTime(currentFrame, fps)}</span>
         <span className={styles.muted}>{copy.syncNote}</span>
+        <span className={styles.muted}>{copy.keyboardHint}</span>
       </div>
 
       <div className={styles.toggles}>

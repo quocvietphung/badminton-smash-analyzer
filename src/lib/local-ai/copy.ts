@@ -8,6 +8,7 @@ export type EvidenceCopy = {
   originalVideo: string;
   annotatedVideo: string;
   syncNote: string;
+  keyboardHint: string;
   overlayToggle: string;
   courtOutline: string;
   shuttleTrail: string;
@@ -131,6 +132,7 @@ const EN: EvidenceCopy = {
   originalVideo: "Original",
   annotatedVideo: "Annotated",
   syncNote: "Both videos stay in sync while you seek.",
+  keyboardHint: "Keys (focus this bar): ← → one frame, Shift + ← → five frames, Space play/pause, Home/End first/last frame.",
   overlayToggle: "Show overlay on the original",
   courtOutline: "Court outline",
   shuttleTrail: "Shuttle trail",
@@ -281,6 +283,7 @@ const VI: EvidenceCopy = {
   originalVideo: "Gốc",
   annotatedVideo: "Đã chú thích",
   syncNote: "Hai video luôn đồng bộ khi bạn tua.",
+  keyboardHint: "Phím (chọn thanh này): ← → một khung hình, Shift + ← → năm khung hình, Space phát/tạm dừng, Home/End khung đầu/cuối.",
   overlayToggle: "Hiện lớp phủ trên video gốc",
   courtOutline: "Đường biên sân",
   shuttleTrail: "Quỹ đạo cầu",
@@ -431,6 +434,7 @@ const DE: EvidenceCopy = {
   originalVideo: "Original",
   annotatedVideo: "Annotiert",
   syncNote: "Beide Videos bleiben beim Spulen synchron.",
+  keyboardHint: "Tasten (Leiste fokussieren): ← → ein Bild, Umschalt + ← → fünf Bilder, Leertaste Wiedergabe/Pause, Pos1/Ende erstes/letztes Bild.",
   overlayToggle: "Überlagerung auf dem Original anzeigen",
   courtOutline: "Feldlinien",
   shuttleTrail: "Federbahn",
